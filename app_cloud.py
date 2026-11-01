@@ -1102,6 +1102,19 @@ elif app_mode == "🌙 ミッドナイト高回収率 ＆ PRO予想融合シミ�
   else:
     st.warning("Supabaseのレース結果データ（race_results）がありません。")
 
+# --- 補助関数はファイルのトップレベル（インデントなし）に置く ---
+def is_midnight_time(time_str):
+  if not time_str or ":" not in time_str:
+    return False
+  try:
+    parts = time_str.split(":")
+    hour = int(parts[0])
+    minute = int(parts[1])
+    return (hour > 20 or (hour == 20 and minute >= 35) or hour < 4)
+  except:
+    return False
+
+
 # ==========================================
 # 4. ミッドナイトAI自動探索 (黄金比率の発見)
 # ==========================================
@@ -1112,14 +1125,12 @@ elif app_mode == "🤖 ミッドナイトAI自動探索 (黄金比率の発見)"
   df_parsed = get_parsed_df()
 
   if not df_parsed.empty:
-    # ミッドナイトの時間帯（20:35以降または早朝）に絞り込み
     midnight_df = df_parsed[df_parsed["発走時間"].apply(lambda t: is_midnight_time(str(t)))].copy()
 
     st.markdown(f"🌙 抽出されたミッドナイト予想データ数: **{len(midnight_df):,} 件**")
 
     if st.button("🚀 ミッドナイトAI自動探索を実行する", type="primary"):
       with st.spinner("AIが最適な買い目パターンと回収率を解析中..."):
-        # 簡易的な自動集計・探索ロジック
         exploration_results = {}
 
         for _, row in midnight_df.iterrows():
@@ -1160,19 +1171,6 @@ elif app_mode == "🤖 ミッドナイトAI自動探索 (黄金比率の発見)"
           st.warning("探索対象となるデータが見つかりませんでした。")
   else:
     st.warning("有効なデータが見つかりませんでした。")
-
-# 補助関数：ミッドナイト時間の判定
-def is_midnight_time(time_str):
-  if not time_str or ":" not in time_str:
-    return False
-  try:
-    parts = time_str.split(":")
-    hour = int(parts[0])
-    minute = int(parts[1])
-    return (hour > 20 or (hour == 20 and minute >= 35) or hour < 4)
-  except:
-    return False
-
 # ==========================================
 # 5. PRO予想 1×2列目MIX分析 (完全リニューアル版)
 # ==========================================
