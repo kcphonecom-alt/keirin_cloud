@@ -3,10 +3,9 @@ import os
 import pandas as pd
 import psycopg2
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql://postgres.rtlnseqyepazjhyhsvpx:Qpqpqpqpqp123!#@aws-0-ap-southeast-2.pooler.supabase.com:6543/postgres",
-)
+# ソースコード内からパスワードを削除し、環境変数（Streamlit Secrets）からのみ取得します
+  DATABASE_URL = os.environ.get("DATABASE_URL")
+
 
 
 def get_db_connection():
