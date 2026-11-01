@@ -10,6 +10,11 @@ on:
     - cron: '45 14 * * *' # 日本時間 23:45 （ミッドナイト結果の当日取り込み）
 
   workflow_dispatch: # 手動でもポチッと実行できるようにする
+    inputs:
+      days_offset:
+        description: '対象日のオフセット（0=今日, 1=昨日 ※結果の取りこぼし回収用。PRO予想は当日のみ取得可）'
+        required: false
+        default: '0'
 
 jobs:
   update-race-data:
@@ -33,5 +38,6 @@ jobs:
       - name: Run daily update script
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DAYS_OFFSET: ${{ inputs.days_offset || '0' }}
         run: |
           python daily_update.py

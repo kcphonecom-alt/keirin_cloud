@@ -77,6 +77,16 @@ INVALID_NAMES = {
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL)
 
+
+def describe_db_target():
+    """ログ確認用に、接続先のホスト部分だけを返す（パスワードは出さない）。"""
+    try:
+        from urllib.parse import urlparse
+        u = urlparse(DATABASE_URL)
+        return f"{u.hostname}:{u.port}{u.path}"
+    except Exception:
+        return "(解析できませんでした)"
+
 async def fetch_rendered_text(page, url):
     try:
         await page.goto(url, wait_until="networkidle", timeout=15000)
@@ -370,14 +380,18 @@ def parse_race_result_page(raw_text, race_id, start_time_val):
 async def run_daily_update():
     print("=== 競輪日次自動アップデート処理（完全統合版）を開始します ===")
     # GitHub Actions等のUTC環境でも日本時間で日付判定する
-    today_dt = datetime.now(timezone(timedelta(hours=9)))
+    # DAYS_OFFSET: 手動実行で「昨日分」を対象にしたい場合に 1 を指定（結果の取りこぼし回収用）
+    days_offset = int(os.environ.get("DAYS_OFFSET", "0") or "0")
+    today_dt = datetime.now(timezone(timedelta(hours=9))) - timedelta(days=days_offset)
+    print(f"対象日: {today_dt.strftime('%Y-%m-%d')} (JST, offset={days_offset}) / DB接続先: {describe_db_target()}")
 
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
     except Exception as e:
+        # ここで正常終了するとGitHub Actionsが「成功」と誤表示するため、異常終了させる
         print(f"[致命的エラー] DB接続に失敗しました: {e}")
-        return
+        raise SystemExit(1)
 
     updated_races_count = 0
 
