@@ -85,6 +85,19 @@ def init_db():
 init_db()
 
 
+# --- 補助関数：ミッドナイト時間の判定（トップレベルに配置） ---
+def is_midnight_time(time_str):
+  if not time_str or ":" not in time_str:
+    return False
+  try:
+    parts = time_str.split(":")
+    hour = int(parts[0])
+    minute = int(parts[1])
+    return (hour > 20 or (hour == 20 and minute >= 35) or hour < 4)
+  except:
+    return False
+
+
 # --- 完全精査版パーサー：BOX・イコール・フォーメーションの完全自動展開エンジン ---
 def parse_bet_string_detailed_rows(
     bet_str, r1, r2, r3, pay_3t, pay_3f, pay_2t, payout_json_raw
@@ -1102,19 +1115,6 @@ elif app_mode == "🌙 ミッドナイト高回収率 ＆ PRO予想融合シミ�
   else:
     st.warning("Supabaseのレース結果データ（race_results）がありません。")
 
-# --- 補助関数はファイルのトップレベル（インデントなし）に置く ---
-def is_midnight_time(time_str):
-  if not time_str or ":" not in time_str:
-    return False
-  try:
-    parts = time_str.split(":")
-    hour = int(parts[0])
-    minute = int(parts[1])
-    return (hour > 20 or (hour == 20 and minute >= 35) or hour < 4)
-  except:
-    return False
-
-
 # ==========================================
 # 4. ミッドナイトAI自動探索 (黄金比率の発見)
 # ==========================================
@@ -1171,6 +1171,7 @@ elif app_mode == "🤖 ミッドナイトAI自動探索 (黄金比率の発見)"
           st.warning("探索対象となるデータが見つかりませんでした。")
   else:
     st.warning("有効なデータが見つかりませんでした。")
+
 # ==========================================
 # 5. PRO予想 1×2列目MIX分析 (完全リニューアル版)
 # ==========================================
