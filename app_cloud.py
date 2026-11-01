@@ -42,10 +42,12 @@ st.markdown(
 
 
 def get_db_connection():
-  DATABASE_URL = os.environ.get(
-      "DATABASE_URL",
-      "postgresql://postgres.rtlnseqyepazjhyhsvpx:Qpqpqpqpqp123!#@aws-0-ap-southeast-2.pooler.supabase.com:6543/postgres",
-  )
+  # ソースコード内からパスワードを削除し、環境変数（Streamlit Secrets）からのみ取得します
+  DATABASE_URL = os.environ.get("DATABASE_URL")
+
+  if not DATABASE_URL:
+    raise ValueError("環境変数 'DATABASE_URL' が設定されていません。")
+
   if psycopg2 is None:
     raise ModuleNotFoundError("psycopg2-binary パッケージが見つかりません。")
   return psycopg2.connect(DATABASE_URL)
