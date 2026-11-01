@@ -547,6 +547,25 @@ def allocate(ranked_df, budget_yen=1500, stake_yen=100, min_ev=1.0, max_points_p
     return out, {"points": len(out), "amount": len(out) * stake_yen}
 
 
+def diagnose(memos, results_by_id, from_date=None):
+    """候補が0件のときに理由が分かるよう、データ状況を集計する。"""
+    races = set()
+    unresulted = set()
+    for pred in iter_predictions(memos, results_by_id):
+        races.add(pred["レースID"])
+        if not pred["has_result"]:
+            unresulted.add(pred["レースID"])
+    unresulted_from = {
+        r for r in unresulted if not from_date or r[:8] >= from_date
+    }
+    return {
+        "races_with_pred": len(races),
+        "unresulted_races": len(unresulted),
+        "unresulted_from_date": len(unresulted_from),
+        "latest_date": max((r[:8] for r in races), default="-"),
+    }
+
+
 def frames_to_inputs(df_memos, df_results):
     """app_cloud.py の DataFrame から iter_predictions 用の入力へ変換する。"""
     memos = df_memos.to_dict("records") if df_memos is not None else []

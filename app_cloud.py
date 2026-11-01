@@ -1311,6 +1311,13 @@ elif app_mode == "🎯 期待値（EV）買い目算出":
       "過去のPRO予想実績（予想家×券種の的中率・払戻と、複数予想家の重なり）から推定した期待値で、"
       "結果が未確定のレースの買い目をランキングし、予算配分案を出します。"
   )
+  with st.expander("📖 使い方（最初に読んでください）", expanded=True):
+    st.markdown(
+        "1. **対象日**を選ぶ（初期値は今日）。この日以降で、DBに予想メモがあり、まだ結果が登録されていないレースが対象です。\n"
+        "2. **PRO全体／ミッドナイトのみ**と**対象券種**、**予算**、**最低期待回収率**を決めると、下に「予算配分案」と「EVランキング（全候補）」が出ます。\n"
+        "3. 手元に現在オッズがある場合は、下の入力欄に1行ずつ「レースID,券種,買い目,オッズ」で貼ると、その買い目は的中率×現在オッズで計算し直されます。\n"
+        "4. 候補が0件のときは、画面下部に理由（データ状況）が出ます。結果が未登録のレースが無い日は候補も出ません。"
+    )
   if ev_engine is None:
     st.error("ev_engine モジュールが読み込めませんでした。デプロイに ev_engine.py が含まれているか確認してください。")
   else:
@@ -1320,10 +1327,12 @@ elif app_mode == "🎯 期待値（EV）買い目算出":
     else:
       c1, c2, c3 = st.columns(3)
       scope = c1.radio("対象レース", ["PRO全体", "ミッドナイトのみ"])
-      budget = c2.number_input("予算（円）", min_value=100, max_value=100000, value=1500, step=100)
-      min_ev_pct = c3.slider("最低期待回収率（%）", 50, 300, 100)
-      bet_types = st.multiselect(
-          "対象券種", ev_engine.BET_TYPES, default=["2車単", "ワイド"]
+      target_date = c2.date_input("対象日（この日以降）", value=datetime.now().date())
+      budget = c3.number_input("予算（円）", min_value=100, max_value=100000, value=1500, step=100)
+      c4, c5 = st.columns(2)
+      min_ev_pct = c4.slider("最低期待回収率（%）", 50, 300, 80)
+      bet_types = c5.multiselect(
+          "対象券種", ev_engine.BET_TYPES, default=ev_engine.BET_TYPES
       )
       odds_text = st.text_area(
           "現在オッズ（任意）: 1行ごとに「レースID,券種,買い目,オッズ」",
@@ -1347,10 +1356,21 @@ elif app_mode == "🎯 期待値（EV）買い目算出":
           midnight_only=(scope == "ミッドナイトのみ"),
           bet_types=bet_types or None,
           odds_map=odds_map,
-          from_date=datetime.now().strftime("%Y%m%d"),
+          from_date=target_date.strftime("%Y%m%d"),
       )
       if ranked_ev.empty:
-        st.info("対象の未確定レース買い目がありません。")
+        diag = ev_engine.diagnose(memos_ev, results_ev, from_date=target_date.strftime("%Y%m%d"))
+        st.warning("この条件では候補が0件でした。データ状況は次のとおりです。")
+        st.markdown(
+            f"- DB内の予想つきレース: {diag['races_with_pred']}件（うち結果未登録: {diag['unresulted_races']}件）\n"
+            f"- 対象日（{target_date}）以降で結果未登録のレース: {diag['unresulted_from_date']}件\n"
+            f"- 予想メモの最新日: {diag['latest_date']}"
+        )
+        st.info(
+            "結果が未登録のレースが無いと候補は出ません。予想メモがDBに同期されていない開催"
+            "（例：当日のミッドナイト）も対象外になります。表示の確認だけなら、対象日を過去に変えると"
+            "結果未登録のまま残っているレースでランキングが見られます。"
+        )
       else:
         alloc_ev, summary_ev = ev_engine.allocate(
             ranked_ev, budget_yen=int(budget), min_ev=min_ev_pct / 100.0
