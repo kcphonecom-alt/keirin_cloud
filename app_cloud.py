@@ -7,6 +7,11 @@ import urllib.request
 import pandas as pd
 import streamlit as st
 
+try:
+  import ev_engine
+except Exception:
+  ev_engine = None
+
 # psycopg2 の安全なインポート
 try:
   import psycopg2
@@ -345,6 +350,7 @@ app_mode = st.sidebar.radio(
         "🌙 ミッドナイト高回収率 ＆ PRO予想融合シミュレータ",
         "🤖 ミッドナイトAI自動探索 (黄金比率の発見)",
         "PRO予想 1×2列目MIX分析",
+        "🎯 期待値（EV）買い目算出",
     ],
 )
 
@@ -1295,3 +1301,67 @@ elif app_mode == "PRO予想 1×2列目MIX分析":
           st.warning("集計可能なデータが見つかりませんでした。")
   else:
     st.warning("有効なデータが見つかりませんでした。")
+
+# ==========================================
+# 6. 期待値（EV）買い目算出
+# ==========================================
+elif app_mode == "🎯 期待値（EV）買い目算出":
+  st.title("🎯 期待値（EV）買い目算出")
+  st.markdown(
+      "過去のPRO予想実績（予想家×券種の的中率・払戻と、複数予想家の重なり）から推定した期待値で、"
+      "結果が未確定のレースの買い目をランキングし、予算配分案を出します。"
+  )
+  if ev_engine is None:
+    st.error("ev_engine モジュールが読み込めませんでした。デプロイに ev_engine.py が含まれているか確認してください。")
+  else:
+    _, df_memos_ev, df_results_ev = load_replica_data()
+    if df_memos_ev.empty or df_results_ev.empty:
+      st.warning("有効なデータが見つかりませんでした。")
+    else:
+      c1, c2, c3 = st.columns(3)
+      scope = c1.radio("対象レース", ["PRO全体", "ミッドナイトのみ"])
+      budget = c2.number_input("予算（円）", min_value=100, max_value=100000, value=1500, step=100)
+      min_ev_pct = c3.slider("最低期待回収率（%）", 50, 300, 100)
+      bet_types = st.multiselect(
+          "対象券種", ev_engine.BET_TYPES, default=["2車単", "ワイド"]
+      )
+      odds_text = st.text_area(
+          "現在オッズ（任意）: 1行ごとに「レースID,券種,買い目,オッズ」",
+          placeholder="20261102_名古屋_7,2車単,3-2,15.6",
+      )
+      odds_map = {}
+      for line in odds_text.splitlines():
+        parts = [x.strip() for x in line.split(",")]
+        if len(parts) == 4:
+          try:
+            odds_map[(parts[0], parts[1], parts[2])] = float(parts[3])
+          except ValueError:
+            pass
+
+      memos_ev, results_ev = ev_engine.frames_to_inputs(df_memos_ev, df_results_ev)
+      stats_ev = ev_engine.build_history(memos_ev, results_ev)
+      ranked_ev = ev_engine.score_upcoming(
+          memos_ev,
+          results_ev,
+          stats_ev,
+          midnight_only=(scope == "ミッドナイトのみ"),
+          bet_types=bet_types or None,
+          odds_map=odds_map,
+          from_date=datetime.now().strftime("%Y%m%d"),
+      )
+      if ranked_ev.empty:
+        st.info("対象の未確定レース買い目がありません。")
+      else:
+        alloc_ev, summary_ev = ev_engine.allocate(
+            ranked_ev, budget_yen=int(budget), min_ev=min_ev_pct / 100.0
+        )
+        st.subheader(
+            f"💴 予算配分案（{summary_ev['points']}点 / {summary_ev['amount']:,}円）"
+        )
+        if alloc_ev.empty:
+          st.info("最低期待回収率を超える買い目がありませんでした。下のランキングから個別に選んでください。")
+        else:
+          st.dataframe(alloc_ev, use_container_width=True, hide_index=True)
+        st.subheader("📊 EVランキング（全候補）")
+        st.dataframe(ranked_ev, use_container_width=True, hide_index=True)
+      st.caption("推定EVは過去実績ベースの目安であり、的中や回収を保証するものではありません。")
