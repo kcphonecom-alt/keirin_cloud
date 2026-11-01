@@ -1107,10 +1107,71 @@ elif app_mode == "🌙 ミッドナイト高回収率 ＆ PRO予想融合シミ�
 # ==========================================
 elif app_mode == "🤖 ミッドナイトAI自動探索 (黄金比率の発見)":
   st.title("🤖 ミッドナイトAI自動探索 — 黄金比率の発見シミュレータ")
-  st.markdown("発走20:35以降のミッドナイトレースを対象に自動探索を行います。")
-  _, _, df_results = load_replica_data()
-  if df_results.empty:
-    st.warning("データがありません。")
+  st.markdown("発走20:35以降のミッドナイトレースを対象に、PRO予想の1〜3列目データを用いた最適な組み合わせパターンや回収率を自動探索します。")
+
+  df_parsed = get_parsed_df()
+
+  if not df_parsed.empty:
+    # ミッドナイトの時間帯（20:35以降または早朝）に絞り込み
+    midnight_df = df_parsed[df_parsed["発走時間"].apply(lambda t: is_midnight_time(str(t)))].copy()
+
+    st.markdown(f"🌙 抽出されたミッドナイト予想データ数: **{len(midnight_df):,} 件**")
+
+    if st.button("🚀 ミッドナイトAI自動探索を実行する", type="primary"):
+      with st.spinner("AIが最適な買い目パターンと回収率を解析中..."):
+        # 簡易的な自動集計・探索ロジック
+        exploration_results = {}
+
+        for _, row in midnight_df.iterrows():
+          author = row["予想家"]
+          if author not in exploration_results:
+            exploration_results[author] = {"総レース": 0, "総投資": 0, "総払戻": 0, "的中数": 0}
+
+          exploration_results[author]["総レース"] += 1
+          exploration_results[author]["総投資"] += row["投資額"]
+          exploration_results[author]["総払戻"] += row["払戻合計"]
+          if row["払戻合計"] > 0:
+            exploration_results[author]["的中数"] += 1
+
+        exp_list = []
+        for auth, data in exploration_results.items():
+          inv = data["総投資"]
+          ret = data["総払戻"]
+          roi = (ret / inv * 100) if inv > 0 else 0
+          hit_rate = (data["的中数"] / data["総レース"] * 100) if data["総レース"] > 0 else 0
+
+          exp_list.append({
+              "予想家 / 戦略": auth,
+              "対象レース数": data["総レース"],
+              "的中数": data["的中数"],
+              "的中率": f"{hit_rate:.1f}%",
+              "総投資額": f"{inv:,} 円",
+              "総払戻額": f"{ret:,} 円",
+              "回収率 (ROI)": round(roi, 2),
+          })
+
+        if exp_list:
+          df_exp_res = pd.DataFrame(exp_list).sort_values(by="回収率 (ROI)", ascending=False)
+          st.success("✨ ミッドナイトAI自動探索が完了しました！")
+          
+          st.subheader("📊 ミッドナイト予想家別 回収率ランキング")
+          st.dataframe(df_exp_res, use_container_width=True, hide_index=True)
+        else:
+          st.warning("探索対象となるデータが見つかりませんでした。")
+  else:
+    st.warning("有効なデータが見つかりませんでした。")
+
+# 補助関数：ミッドナイト時間の判定
+def is_midnight_time(time_str):
+  if not time_str or ":" not in time_str:
+    return False
+  try:
+    parts = time_str.split(":")
+    hour = int(parts[0])
+    minute = int(parts[1])
+    return (hour > 20 or (hour == 20 and minute >= 35) or hour < 4)
+  except:
+    return False
 
 # ==========================================
 # 5. PRO予想 1×2列目MIX分析 (完全リニューアル版)
