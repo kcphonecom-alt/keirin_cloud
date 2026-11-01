@@ -23,6 +23,7 @@ import itertools
 import json
 import re
 from collections import defaultdict
+from datetime import datetime, timedelta
 
 import pandas as pd
 
@@ -449,7 +450,7 @@ def score_upcoming(
     for pred in iter_predictions(memos, results_by_id):
         if pred["has_result"]:
             continue
-        if from_date and pred["レースID"][:8] < from_date:
+        if from_date and pred["レースID"][:8] < _race_date_threshold(from_date):
             continue
         if midnight_only and not is_midnight_time(pred["発走時間"]):
             continue
@@ -547,6 +548,16 @@ def allocate(ranked_df, budget_yen=1500, stake_yen=100, min_ev=1.0, max_points_p
     return out, {"points": len(out), "amount": len(out) * stake_yen}
 
 
+def _race_date_threshold(from_date):
+    """レースIDの日付は開催「初日」のため、3日間開催の3日目（初日=対象日の2日前）を
+    取りこぼさないよう、対象日の2日前までを下限にする。"""
+    try:
+        base = datetime.strptime(from_date, "%Y%m%d")
+        return (base - timedelta(days=2)).strftime("%Y%m%d")
+    except (TypeError, ValueError):
+        return from_date
+
+
 def diagnose(memos, results_by_id, from_date=None):
     """候補が0件のときに理由が分かるよう、データ状況を集計する。"""
     races = set()
@@ -555,8 +566,9 @@ def diagnose(memos, results_by_id, from_date=None):
         races.add(pred["レースID"])
         if not pred["has_result"]:
             unresulted.add(pred["レースID"])
+    threshold = _race_date_threshold(from_date) if from_date else None
     unresulted_from = {
-        r for r in unresulted if not from_date or r[:8] >= from_date
+        r for r in unresulted if not threshold or r[:8] >= threshold
     }
     return {
         "races_with_pred": len(races),
