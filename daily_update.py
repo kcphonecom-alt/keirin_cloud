@@ -87,15 +87,44 @@ def describe_db_target():
     except Exception:
         return "(解析できませんでした)"
 
-async def fetch_rendered_text(page, url):
+async def _scroll_through_page(page):
+    """遅延描画（スクロールで初めて読み込まれる欄）を促すため、ページ末尾まで段階的にスクロールする。"""
+    try:
+        await page.evaluate("""async () => {
+            const step = 600;
+            const h = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+            for (let y = 0; y <= h; y += step) {
+                window.scrollTo(0, y);
+                await new Promise(r => setTimeout(r, 120));
+            }
+            window.scrollTo(0, document.body.scrollHeight);
+        }""")
+    except Exception:
+        pass
+
+async def fetch_rendered_text(page, url, wait_text="払戻金"):
     try:
         await page.goto(url, wait_until="networkidle", timeout=15000)
         try:
-            await page.wait_for_selector("text=払戻金", timeout=4000)
+            await page.wait_for_selector(f"text={wait_text}", timeout=6000)
         except Exception:
             await page.wait_for_timeout(2000)
-            
+
+        # 予想ページなど、欄が遅延描画されるページ向けにスクロールしてから本文を取る
+        # （出走表・結果ページは従来どおりの取得方法を維持する）
+        if wait_text != "払戻金":
+            await _scroll_through_page(page)
+            await page.wait_for_timeout(1200)
         content = await page.evaluate("() => document.body.innerText")
+
+        # 目的の見出しがまだ本文に入っていない場合は、追加で待って再取得する（予想ページのみ想定）
+        if wait_text != "払戻金" and wait_text not in (content or ""):
+            await page.wait_for_timeout(2500)
+            await _scroll_through_page(page)
+            await page.wait_for_timeout(1200)
+            retry_content = await page.evaluate("() => document.body.innerText")
+            if wait_text in (retry_content or "") or len(retry_content or "") > len(content or ""):
+                content = retry_content
         return content
     except Exception:
         pass
@@ -465,8 +494,11 @@ async def run_daily_update():
                         execute_values(cursor, insert_player_query, players)
 
                     # 2. PRO予想（買い目原文と各列を分離して保存）
-                    pred_text = await fetch_rendered_text(page, pred_url)
+                    pred_text = await fetch_rendered_text(page, pred_url, wait_text="PROユーザー予想")
                     parsed_preds = parse_pro_predictions_html(pred_text)
+                    if not parsed_preds:
+                        marker_flag = "有" if "PROユーザー予想" in (pred_text or "") else "無"
+                        print(f"   └ [予想0件] {venue_jp} {r_num}R (マーカー:{marker_flag}, 文字数:{len(pred_text or '')})")
                     if parsed_preds:
                         cursor.execute('DELETE FROM race_memos WHERE "レースID" IN (%s, %s)', (current_race_id, old_style_race_id))
                         preview_lines = []
