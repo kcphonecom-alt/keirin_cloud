@@ -13,8 +13,7 @@ from playwright.async_api import async_playwright
 import daily_update as du
 
 TARGETS = [
-    ("熊本", "2026103187", 3, 7),
-    ("武雄", "2026103184", 3, 12),
+    ("武雄", "2026110284", 1, 12),
 ]
 
 
