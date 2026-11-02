@@ -499,6 +499,8 @@ async def run_daily_update():
                     if not parsed_preds:
                         marker_flag = "有" if "PROユーザー予想" in (pred_text or "") else "無"
                         print(f"   └ [予想0件] {venue_jp} {r_num}R (マーカー:{marker_flag}, 文字数:{len(pred_text or '')})")
+                        snippet = (pred_text or "")[:500].replace("\n", " ⏎ ")
+                        print(f"   └ [本文冒頭] {snippet}")
                     if parsed_preds:
                         cursor.execute('DELETE FROM race_memos WHERE "レースID" IN (%s, %s)', (current_race_id, old_style_race_id))
                         preview_lines = []
