@@ -109,22 +109,18 @@ async def fetch_rendered_text(page, url, wait_text="払戻金"):
             await page.wait_for_selector(f"text={wait_text}", timeout=6000)
         except Exception:
             await page.wait_for_timeout(2000)
-
-        # 予想ページなど、欄が遅延描画されるページ向けにスクロールしてから本文を取る
-        # （出走表・結果ページは従来どおりの取得方法を維持する）
-        if wait_text != "払戻金":
-            await _scroll_through_page(page)
-            await page.wait_for_timeout(1200)
         content = await page.evaluate("() => document.body.innerText")
 
-        # 目的の見出しがまだ本文に入っていない場合は、追加で待って再取得する（予想ページのみ想定）
-        if wait_text != "払戻金" and wait_text not in (content or ""):
-            await page.wait_for_timeout(2500)
-            await _scroll_through_page(page)
-            await page.wait_for_timeout(1200)
-            retry_content = await page.evaluate("() => document.body.innerText")
-            if wait_text in (retry_content or "") or len(retry_content or "") > len(content or ""):
-                content = retry_content
+        # 予想ページ向け: 見出しはあるのに本文が短い（投稿がまだ読み込まれていない殻の）場合は、
+        # スクロールはせず、その場で待って本文を取り直す（最大2回・長い方を採用する）
+        if wait_text != "払戻金":
+            for _ in range(2):
+                if wait_text in (content or "") and len(content or "") >= 4000:
+                    break
+                await page.wait_for_timeout(4000)
+                retry_content = await page.evaluate("() => document.body.innerText")
+                if len(retry_content or "") > len(content or ""):
+                    content = retry_content
         return content
     except Exception:
         pass
@@ -435,8 +431,9 @@ async def run_daily_update():
             matched_base = None
             matched_day = None
 
-            # 🔄 過去4日間に遡って開催初日のコード（ベース日）を正確に探すロジック
-            for days_ago in range(4):
+            # 🔄 過去6日間に遡って開催初日のコード（ベース日）を正確に探すロジック
+            #    日次は date オブジェクト同士の差分で計算する（月跨ぎでもずれない）
+            for days_ago in range(6):
                 start_dt = today_dt - timedelta(days=days_ago)
                 start_date_str = start_dt.strftime("%Y%m%d")
                 test_base = f"{start_date_str}{v_code}"
@@ -449,6 +446,11 @@ async def run_daily_update():
                 txt = await fetch_rendered_text(page, test_url)
                 
                 if is_valid_race_page(txt, venue_jp):
+                    # 会場名が含まれるだけでは誤判定しうるため、実際に出走表として
+                    # パースできることまで確認してから開催と確定する
+                    probe_players = parse_winticket_detailed_score(txt, venue_jp, "probe", None)
+                    if not probe_players:
+                        continue
                     matched_base = test_base
                     matched_day = str(target_day_num)
                     break
