@@ -351,6 +351,7 @@ app_mode = st.sidebar.radio(
         "🤖 ミッドナイトAI自動探索 (黄金比率の発見)",
         "PRO予想 1×2列目MIX分析",
         "🎯 期待値（EV）買い目算出",
+        "🧮 ミッドナイト買い目 回収率チェッカー",
     ],
 )
 
@@ -1385,3 +1386,63 @@ elif app_mode == "🎯 期待値（EV）買い目算出":
         st.subheader("📊 EVランキング（全候補）")
         st.dataframe(ranked_ev, use_container_width=True, hide_index=True)
       st.caption("推定EVは過去実績ベースの目安であり、的中や回収を保証するものではありません。")
+elif app_mode == "🧮 ミッドナイト買い目 回収率チェッカー":
+  import datetime as _dt
+
+  import midnight_checker
+
+  st.title("🧮 ミッドナイト買い目 回収率チェッカー")
+  st.caption("指定した日のミッドナイト（発走20:35以降）の全レースに、その買い目を1点ずつ買った場合の回収率と、根拠となったレース一覧を表示します。")
+
+  _jst = _dt.timezone(_dt.timedelta(hours=9))
+  c1, c2, c3 = st.columns(3)
+  target_date = c1.date_input("対象日", value=_dt.datetime.now(_jst).date())
+  bet_type = c2.selectbox("券種", ["ワイド", "2車単", "2車複", "3連複", "3連単"])
+  stake = c3.number_input("1点の金額（円）", min_value=100, step=100, value=100)
+
+  _n_cars = 2 if bet_type in ("ワイド", "2車単", "2車複") else 3
+  _ordered = bet_type in ("2車単", "3連単")
+  _labels = ["1着", "2着", "3着"] if _ordered else ["車番1", "車番2", "車番3"]
+  _defaults = [3, 2, 1]
+  _car_cols = st.columns(_n_cars)
+  cars = []
+  for i in range(_n_cars):
+    cars.append(
+        _car_cols[i].selectbox(
+            _labels[i],
+            list(range(1, 10)),
+            index=_defaults[i] - 1,
+            key=f"mc_car_{bet_type}_{i}",
+        )
+    )
+
+  if len(set(cars)) != len(cars):
+    st.error("車番が重複しています。すべて異なる車番を選んでください。")
+  else:
+    _, _, _df_res = load_replica_data()
+    if _df_res.empty:
+      st.warning("結果データを読み込めませんでした。")
+    else:
+      _summary, _rows = midnight_checker.check(
+          _df_res.to_dict("records"), target_date, bet_type, cars, stake=int(stake)
+      )
+      st.subheader(f"🌙 {bet_type} {_summary['組番']} × {target_date} ミッドナイト")
+      m1, m2, m3, m4 = st.columns(4)
+      m1.metric("回収率", f"{_summary['回収率']:.1f}%")
+      m2.metric("収支", f"{_summary['収支']:+,}円")
+      m3.metric("投資", f"{_summary['総投資']:,}円")
+      m4.metric("払戻", f"{_summary['総払戻']:,}円")
+      st.write(
+          f"対象 {_summary['対象レース数']} レース ／ 的中 {_summary['的中レース数']} レース"
+          f"（的中率 {_summary['的中率']:.1f}%）"
+      )
+      if _rows:
+        _df_show = pd.DataFrame(_rows)
+        _df_show["判定"] = _df_show["的中"].map({True: "◎ 的中", False: "―"})
+        _df_show = _df_show.drop(columns=["的中"])[
+            ["会場", "レース", "発走", "結果", "払戻金", "判定"]
+        ]
+        st.dataframe(_df_show, use_container_width=True, hide_index=True)
+      else:
+        st.info("この日のミッドナイトの結果データはまだありません（レース前、または未同期の可能性があります）。")
+    st.caption("払戻金は公式払戻（100円あたり）をもとに、1点の金額へ比例換算しています。")
