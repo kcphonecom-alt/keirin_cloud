@@ -43,4 +43,4 @@ jobs:
           BF_TO: ${{ inputs.to_date }}
           BF_LIMIT_DAYS: ${{ inputs.limit_days }}
         run: |
-          python backfill_midnight.py
+          python -u backfill_midnight.py
