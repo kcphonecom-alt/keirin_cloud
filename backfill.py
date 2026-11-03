@@ -18,6 +18,14 @@ TARGETS = [
 ]
 
 
+async def fetch_pred_text(page, url):
+    """古い daily_update.py（wait_text 引数なし）でも動くようにする互換ラッパー。"""
+    try:
+        return await du.fetch_rendered_text(page, url, wait_text="PROユーザー予想")
+    except TypeError:
+        return await du.fetch_rendered_text(page, url)
+
+
 async def main():
     conn = du.get_db_connection()
     cur = conn.cursor()
@@ -71,10 +79,9 @@ async def main():
                             players,
                         )
 
-                    pred = await du.fetch_rendered_text(
+                    pred = await fetch_pred_text(
                         page,
                         f"https://www.winticket.jp/keirin/{en}/predictions/{base}/{day}/{r}",
-                        wait_text="PROユーザー予想",
                     )
                     preds = du.parse_pro_predictions_html(pred)
                     if preds:
