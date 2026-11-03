@@ -421,8 +421,23 @@ async def run_daily_update():
     updated_races_count = 0
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+        browser = await p.chromium.launch(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        # Actions（海外データセンター）からのアクセスではPRO予想欄が
+        # 「予想はまだありません」と空で返る事象があるため、ブラウザ環境を
+        # 日本の一般的なMac/Chromeに寄せて取得する（2026-11-03 実験的対策）
+        context = await browser.new_context(
+            locale="ja-JP",
+            timezone_id="Asia/Tokyo",
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/130.0.0.0 Safari/537.36"
+            ),
+        )
+        page = await context.new_page()
 
         for venue_jp, info in STADIUM_MASTER.items():
             v_en = info["en"]
