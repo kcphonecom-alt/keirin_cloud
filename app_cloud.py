@@ -40,10 +40,99 @@ st.markdown(
         text-rendering: optimizeLegibility;
         font-size: 14px !important;
     }
+    /* スマホ用カード表示の部品 */
+    .m-card {
+        border: 1px solid rgba(128,128,128,.35);
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin-bottom: 10px;
+    }
+    .m-head { font-weight: 700; font-size: 1.05rem; margin-bottom: 4px; word-break: break-all; }
+    .m-row {
+        display: flex; justify-content: space-between; gap: 12px;
+        padding: 3px 0; border-top: 1px dashed rgba(128,128,128,.25);
+    }
+    .m-label { opacity: .75; flex-shrink: 0; }
+    .m-val { font-weight: 600; text-align: right; word-break: break-all; }
+    /* スマホ幅では表(pc_)を隠してカード(sp_)だけ出す */
+    @media (max-width: 768px) {
+        div[class*="st-key-pc_"] { display: none !important; }
+        .main .block-container {
+            max-width: 100%;
+            padding-left: .7rem; padding-right: .7rem; padding-top: .5rem;
+        }
+        h1 { font-size: 1.45rem !important; line-height: 1.35 !important; }
+        h2 { font-size: 1.25rem !important; }
+        h3 { font-size: 1.1rem !important; }
+        html, body, [class*="css"] { font-size: 13px !important; }
+        [data-testid="stMetricValue"] { font-size: 1.35rem !important; }
+        [data-testid="stMetricLabel"] { font-size: .8rem !important; }
+    }
+    /* PC幅ではカード(sp_)を隠して表(pc_)だけ出す */
+    @media (min-width: 769px) {
+        div[class*="st-key-sp_"] { display: none !important; }
+    }
     </style>
 """,
     unsafe_allow_html=True,
 )
+
+
+import html as _html_mod
+
+
+def _fmt_cell(v):
+  """カード表示用にセル値を読みやすい文字列へ整える。"""
+  if v is None:
+    return "―"
+  try:
+    if pd.isna(v):
+      return "―"
+  except Exception:
+    pass
+  if isinstance(v, bool):
+    return "◎" if v else "―"
+  if isinstance(v, int):
+    return f"{v:,}"
+  if isinstance(v, float):
+    s = f"{v:,.2f}".rstrip("0").rstrip(".")
+    return s if s else "0"
+  return str(v)
+
+
+def show_df_responsive(df, key, column_config=None, head_cols=1):
+  """同じDataFrameを、PCでは表・スマホではカードで表示する（項目は省略しない）。
+
+  st.container(key=...) が付ける st-key-pc_<key> / st-key-sp_<key> クラスを
+  上のCSSメディアクエリで幅に応じて切り替える。
+  """
+  with st.container(key=f"pc_{key}"):
+    if column_config:
+      st.dataframe(
+          df,
+          column_config=column_config,
+          use_container_width=True,
+          hide_index=True,
+      )
+    else:
+      st.dataframe(df, use_container_width=True, hide_index=True)
+  with st.container(key=f"sp_{key}"):
+    cols = list(df.columns)
+    cards = []
+    for _, row in df.iterrows():
+      head = " ".join(_fmt_cell(row[c]) for c in cols[:head_cols])
+      body = "".join(
+          f'<div class="m-row"><span class="m-label">'
+          f'{_html_mod.escape(str(c))}</span>'
+          f'<span class="m-val">{_html_mod.escape(_fmt_cell(row[c]))}</span></div>'
+          for c in cols[head_cols:]
+      )
+      cards.append(
+          f'<div class="m-card"><div class="m-head">'
+          f'{_html_mod.escape(head)}</div>{body}</div>'
+      )
+    st.markdown("".join(cards), unsafe_allow_html=True)
+
 
 
 def get_db_connection():
@@ -345,13 +434,13 @@ if st.sidebar.button("🔄 クラウドからデータを再同期"):
 app_mode = st.sidebar.radio(
     "利用する機能を選択してください",
     [
-        "📈 PRO予想家別 回収率アナリティクス (全券種分解)",
-        "👤 PRO予想家 深掘り個別アナリティクス",
+        "🧮 ミッドナイト買い目 回収率チェッカー",
         "🌙 ミッドナイト高回収率 ＆ PRO予想融合シミュレータ",
         "🤖 ミッドナイトAI自動探索 (黄金比率の発見)",
-        "PRO予想 1×2列目MIX分析",
         "🎯 期待値（EV）買い目算出",
-        "🧮 ミッドナイト買い目 回収率チェッカー",
+        "📈 PRO予想家別 回収率アナリティクス (全券種分解)",
+        "👤 PRO予想家 深掘り個別アナリティクス",
+        "PRO予想 1×2列目MIX分析",
     ],
 )
 
@@ -529,7 +618,7 @@ if app_mode == "📈 PRO予想家別 回収率アナリティクス (全券種�
       df_summary_table = pd.DataFrame(summary_rows).sort_values(
           by="予想レース数", ascending=False
       )
-      st.dataframe(df_summary_table, use_container_width=True, hide_index=True)
+      show_df_responsive(df_summary_table, "ana_summary")
 
       st.markdown("---")
       st.subheader("📋 参加レースのシート風詳細ビュー (全レース・新しい順)")
@@ -558,7 +647,7 @@ if app_mode == "📈 PRO予想家別 回収率アナリティクス (全券種�
       end_idx = start_idx + items_per_page
       df_current_page = df_sorted_races.iloc[start_idx:end_idx]
 
-      for _, r in df_current_page.iterrows():
+      for _ri, (_, r) in enumerate(df_current_page.iterrows()):
         with st.container():
           status_badge = "🎯 的中" if r["払戻合計"] > 0 else "❌ ハズレ"
           st.markdown(
@@ -572,7 +661,7 @@ if app_mode == "📈 PRO予想家別 回収率アナリティクス (全券種�
           c_info2.markdown(f"**💬 コメント:** {r['コメント']}")
 
           df_sheet = pd.DataFrame(r["sheet_rows"])
-          st.dataframe(df_sheet, use_container_width=True, hide_index=True)
+          show_df_responsive(df_sheet, f"ana_sheet_{start_idx + _ri}")
 
           st.markdown(
               f"📊 **【トータル集計】** 総点数: **{r['総点数']}点** ｜ 投資:"
@@ -663,15 +752,14 @@ elif app_mode == "👤 PRO予想家 深掘り個別アナリティクス":
           "回収率",
       ]].sort_values(by="レースID", ascending=False)
 
-      st.dataframe(
+      show_df_responsive(
           df_display,
+          "deep_list",
           column_config={
               "投資額": st.column_config.NumberColumn("投資額", format="%d 円"),
               "払戻合計": st.column_config.NumberColumn("払戻合計", format="%d 円"),
               "回収率": st.column_config.NumberColumn("回収率", format="%.1f %%"),
           },
-          use_container_width=True,
-          hide_index=True,
       )
 
       st.markdown("---")
@@ -693,10 +781,8 @@ elif app_mode == "👤 PRO予想家 深掘り個別アナリティクス":
 
       df_details = pd.DataFrame(race_row["sheet_rows"])
       if not df_details.empty:
-        st.dataframe(
-            df_details[["券種", "買い目", "判定", "払戻金額"]],
-            use_container_width=True,
-            hide_index=True,
+        show_df_responsive(
+            df_details[["券種", "買い目", "判定", "払戻金額"]], "deep_detail"
         )
       else:
         st.info("展開データがありません。")
@@ -1118,7 +1204,7 @@ elif app_mode == "🌙 ミッドナイト高回収率 ＆ PRO予想融合シミ�
       st.markdown("---")
       st.subheader("📋 根拠となるレース＆全券種の的中状況リスト")
       df_res_table = pd.DataFrame(race_summary_rows)
-      st.dataframe(df_res_table, use_container_width=True, hide_index=True)
+      show_df_responsive(df_res_table, "sim_table")
   else:
     st.warning("Supabaseのレース結果データ（race_results）がありません。")
 
@@ -1173,7 +1259,7 @@ elif app_mode == "🤖 ミッドナイトAI自動探索 (黄金比率の発見)"
           st.success("✨ ミッドナイトAI自動探索が完了しました！")
           
           st.subheader("📊 ミッドナイト予想家別 回収率ランキング")
-          st.dataframe(df_exp_res, use_container_width=True, hide_index=True)
+          show_df_responsive(df_exp_res, "ai_rank")
         else:
           st.warning("探索対象となるデータが見つかりませんでした。")
   else:
@@ -1263,7 +1349,7 @@ elif app_mode == "PRO予想 1×2列目MIX分析":
 
           st.markdown("---")
           st.subheader("📊 予想家別 1列目×2列目MIX 回収率ランキング")
-          st.dataframe(df_res, use_container_width=True, hide_index=True)
+          show_df_responsive(df_res, "mix_rank")
 
           st.markdown("---")
           st.subheader("📋 【根拠詳細】選択した予想家の的中レース明細")
@@ -1281,7 +1367,7 @@ elif app_mode == "PRO予想 1×2列目MIX分析":
                 f"🎯 **{selected_detail_author}** の的中レース一覧（全"
                 f" {len(df_author_races)} 件）"
             )
-            st.dataframe(
+            show_df_responsive(
                 df_author_races[[
                     "レースID",
                     "発走時間",
@@ -1291,8 +1377,7 @@ elif app_mode == "PRO予想 1×2列目MIX分析":
                     "払戻合計",
                     "回収率",
                 ]],
-                use_container_width=True,
-                hide_index=True,
+                "mix_detail",
             )
           else:
             st.info(
@@ -1382,9 +1467,9 @@ elif app_mode == "🎯 期待値（EV）買い目算出":
         if alloc_ev.empty:
           st.info("最低期待回収率を超える買い目がありませんでした。下のランキングから個別に選んでください。")
         else:
-          st.dataframe(alloc_ev, use_container_width=True, hide_index=True)
+          show_df_responsive(alloc_ev, "ev_alloc")
         st.subheader("📊 EVランキング（全候補）")
-        st.dataframe(ranked_ev, use_container_width=True, hide_index=True)
+        show_df_responsive(ranked_ev, "ev_rank")
       st.caption("推定EVは過去実績ベースの目安であり、的中や回収を保証するものではありません。")
 elif app_mode == "🧮 ミッドナイト買い目 回収率チェッカー":
   import datetime as _dt
@@ -1442,7 +1527,7 @@ elif app_mode == "🧮 ミッドナイト買い目 回収率チェッカー":
         _df_show = _df_show.drop(columns=["的中"])[
             ["会場", "レース", "発走", "結果", "払戻金", "判定"]
         ]
-        st.dataframe(_df_show, use_container_width=True, hide_index=True)
+        show_df_responsive(_df_show, "checker_rows", head_cols=2)
       else:
         st.info("この日のミッドナイトの結果データはまだありません（レース前、または未同期の可能性があります）。")
     st.caption("払戻金は公式払戻（100円あたり）をもとに、1点の金額へ比例換算しています。")
