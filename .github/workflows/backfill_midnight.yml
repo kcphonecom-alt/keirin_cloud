@@ -15,6 +15,14 @@ on:
         description: '1回で処理する開催日の上限'
         required: false
         default: '100'
+  schedule:
+    # JST 02:30 / 08:30 / 14:30 / 20:30 （UTC 17:30 / 23:30 / 05:30 / 11:30）
+    # 不足分が無くなり次第、この schedule は監視側で取り除く
+    - cron: '30 5,11,17,23 * * *'
+
+concurrency:
+  group: midnight-backfill
+  cancel-in-progress: false
 
 jobs:
   backfill:
@@ -39,8 +47,8 @@ jobs:
       - name: Run midnight backfill
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          BF_FROM: ${{ inputs.from_date }}
-          BF_TO: ${{ inputs.to_date }}
-          BF_LIMIT_DAYS: ${{ inputs.limit_days }}
+          BF_FROM: ${{ inputs.from_date || '2025-04-01' }}
+          BF_TO: ${{ inputs.to_date || '2026-10-23' }}
+          BF_LIMIT_DAYS: ${{ inputs.limit_days || '400' }}
         run: |
           python -u backfill_midnight.py
