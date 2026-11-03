@@ -106,7 +106,7 @@ async def main():
             if (time.time() - started) / 60 > max_minutes:
                 print(f"時間上限 ({max_minutes}分) に達したため終了します。残りは次回の実行で続きます")
                 break
-            total_saved += await bf.process_meeting(page, cur, conn, venue, base_code, dnum)
+            total_saved += await bf.process_meeting(page, cur, conn, venue, base_code, dnum, skip_predictions=True)
             done_days += 1
         await browser.close()
     cur.close()

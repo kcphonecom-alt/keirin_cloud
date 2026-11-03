@@ -35,7 +35,7 @@ async def fetch_pred_text(page, url):
         return await du.fetch_rendered_text(page, url)
 
 
-async def process_meeting(page, cur, conn, venue_jp, base, day, max_r=12):
+async def process_meeting(page, cur, conn, venue_jp, base, day, max_r=12, skip_predictions=False):
     """1開催日分（会場×日次）の出走表・予想・結果を取り直す。保存できた結果レース数を返す。"""
     info = du.STADIUM_MASTER[venue_jp]
     en, code = info["en"], info["code"]
@@ -72,11 +72,14 @@ async def process_meeting(page, cur, conn, venue_jp, base, day, max_r=12):
                     players,
                 )
 
-            pred = await fetch_pred_text(
-                page,
-                f"https://www.winticket.jp/keirin/{en}/predictions/{base}/{day}/{r}",
-            )
-            preds = du.parse_pro_predictions_html(pred)
+            if skip_predictions:
+                preds = []
+            else:
+                pred = await fetch_pred_text(
+                    page,
+                    f"https://www.winticket.jp/keirin/{en}/predictions/{base}/{day}/{r}",
+                )
+                preds = du.parse_pro_predictions_html(pred)
             if preds:
                 cur.execute(
                     'DELETE FROM race_memos WHERE "レースID" IN (%s, %s)',
