@@ -437,7 +437,7 @@ app_mode = st.sidebar.radio(
         "🧮 ミッドナイト買い目 回収率チェッカー",
         "🌙 ミッドナイト高回収率 ＆ PRO予想融合シミュレータ",
         "🤖 ミッドナイトAI自動探索 (黄金比率の発見)",
-        "🎯 期待値（EV）買い目算出",
+        "🎯 買い目別 EVランキング",
         "📈 PRO予想家別 回収率アナリティクス (全券種分解)",
         "👤 PRO予想家 深掘り個別アナリティクス",
         "PRO予想 1×2列目MIX分析",
@@ -1391,18 +1391,22 @@ elif app_mode == "PRO予想 1×2列目MIX分析":
 # ==========================================
 # 6. 期待値（EV）買い目算出
 # ==========================================
-elif app_mode == "🎯 期待値（EV）買い目算出":
-  st.title("🎯 期待値（EV）買い目算出")
+# 6. 買い目別 EVランキング
+# ==========================================
+elif app_mode == "🎯 買い目別 EVランキング":
+  st.title("🎯 買い目別 EVランキング")
   st.markdown(
-      "過去のPRO予想実績（予想家×券種の的中率・払戻と、複数予想家の重なり）から推定した期待値で、"
-      "結果が未確定のレースの買い目をランキングし、予算配分案を出します。"
+      "過去の全PRO予想から **「その買い目そのもの」の実績**（組み合わせ別・予想家×組み合わせ・"
+      "会場別・軸車番別）をブレンドし、買い目1点ごとの推定的中率と推定回収率を出して、高い順に並べます。"
+      "「どの予想家の・どの買い目に過去データの裏付けがあるか」を見るためのページです。"
   )
-  with st.expander("📖 使い方（最初に読んでください）", expanded=True):
+  with st.expander("📖 使い方・数字の見方（最初に読んでください）", expanded=True):
     st.markdown(
-        "1. **対象日**を選ぶ（初期値は今日）。この日以降で、DBに予想メモがあり、まだ結果が登録されていないレースが対象です。\n"
-        "2. **PRO全体／ミッドナイトのみ**と**対象券種**、**予算**、**最低期待回収率**を決めると、下に「予算配分案」と「EVランキング（全候補）」が出ます。\n"
-        "3. 手元に現在オッズがある場合は、下の入力欄に1行ずつ「レースID,券種,買い目,オッズ」で貼ると、その買い目は的中率×現在オッズで計算し直されます。\n"
-        "4. 候補が0件のときは、画面下部に理由（データ状況）が出ます。結果が未登録のレースが無い日は候補も出ません。"
+        "1. **対象日**と**対象レース**（ミッドナイトのみ／PRO全体）、**対象券種**を選ぶと、その日以降で結果未確定のレースの買い目が推定回収率の高い順に並びます。\n"
+        "2. **推定回収率**は、その買い目を過去に買い続けた場合の回収率の推定です（100%超が一応の「割に合う」ライン）。**根拠内訳**に、どの実績を何点分ブレンドしたかが出ます。根拠サンプルが少ない買い目は数字が不安定なので、**最低サンプル点数**で足切りできます。\n"
+        "3. **組み合わせ絞り込み**に「3-2」「3=2」のように入れると、その買い目だけに絞れます（パターンの検証用）。\n"
+        "4. 現在オッズを下の欄に貼ると、その買い目は **推定的中率 × 現在オッズ** で計算し直され、順位も変わります。\n"
+        "5. **予算配分案**は、最低期待回収率以上の買い目だけを予算内で上位から拾ったものです。推定は過去実績ベースで、的中を保証するものではありません。"
     )
   if ev_engine is None:
     st.error("ev_engine モジュールが読み込めませんでした。デプロイに ev_engine.py が含まれているか確認してください。")
@@ -1412,13 +1416,20 @@ elif app_mode == "🎯 期待値（EV）買い目算出":
       st.warning("有効なデータが見つかりませんでした。")
     else:
       c1, c2, c3 = st.columns(3)
-      scope = c1.radio("対象レース", ["PRO全体", "ミッドナイトのみ"])
+      scope = c1.radio("対象レース", ["ミッドナイトのみ", "PRO全体"])
       target_date = c2.date_input("対象日（この日以降）", value=datetime.now().date())
       budget = c3.number_input("予算（円）", min_value=100, max_value=100000, value=1500, step=100)
-      c4, c5 = st.columns(2)
+      c4, c5, c6 = st.columns(3)
       min_ev_pct = c4.slider("最低期待回収率（%）", 50, 300, 80)
       bet_types = c5.multiselect(
-          "対象券種", ev_engine.BET_TYPES, default=ev_engine.BET_TYPES
+          "対象券種", ev_engine.BET_TYPES, default=["2車単", "ワイド"]
+      )
+      min_sample = c6.number_input(
+          "最低サンプル点数（根拠）", min_value=0, max_value=100000, value=0, step=50
+      )
+      combo_text = st.text_input(
+          "組み合わせ絞り込み（任意）: 例 3-2 / 3=2",
+          placeholder="3-2",
       )
       odds_text = st.text_area(
           "現在オッズ（任意）: 1行ごとに「レースID,券種,買い目,オッズ」",
@@ -1444,6 +1455,34 @@ elif app_mode == "🎯 期待値（EV）買い目算出":
           odds_map=odds_map,
           from_date=target_date.strftime("%Y%m%d"),
       )
+
+      # 絞り込み（サンプル点数・組み合わせ）
+      if not ranked_ev.empty and min_sample > 0:
+        ranked_ev = ranked_ev[ranked_ev["根拠サンプル点数"] >= min_sample]
+
+      def _combo_key(bet_type, combo):
+        parts = re.split(r"[-=]", str(combo))
+        if bet_type in ("ワイド", "2車複", "3連複"):
+          parts = sorted(parts, key=lambda x: int(x) if x.isdigit() else 0)
+        return "-".join(parts)
+
+      combo_q = (
+          combo_text.replace("→", "-").replace("＞", "-").strip()
+      )
+      if not ranked_ev.empty and combo_q:
+        q_parts = re.split(r"[-=]", combo_q)
+        q_keys = {
+            "-".join(q_parts),
+            "-".join(
+                sorted(q_parts, key=lambda x: int(x) if x.isdigit() else 0)
+            ),
+        }
+        ranked_ev = ranked_ev[
+            ranked_ev.apply(
+                lambda r: _combo_key(r["券種"], r["買い目"]) in q_keys, axis=1
+            )
+        ]
+
       if ranked_ev.empty:
         diag = ev_engine.diagnose(memos_ev, results_ev, from_date=target_date.strftime("%Y%m%d"))
         st.warning("この条件では候補が0件でした。データ状況は次のとおりです。")
@@ -1456,6 +1495,7 @@ elif app_mode == "🎯 期待値（EV）買い目算出":
             "結果が未登録のレースが無いと候補は出ません。予想メモがDBに同期されていない開催"
             "（例：当日のミッドナイト）も対象外になります。表示の確認だけなら、対象日を過去に変えると"
             "結果未登録のまま残っているレースでランキングが見られます。"
+            "サンプル点数や組み合わせで絞り込んでいる場合は、その条件を緩めると出ることがあります。"
         )
       else:
         alloc_ev, summary_ev = ev_engine.allocate(
@@ -1470,7 +1510,9 @@ elif app_mode == "🎯 期待値（EV）買い目算出":
           show_df_responsive(alloc_ev, "ev_alloc")
         st.subheader("📊 EVランキング（全候補）")
         show_df_responsive(ranked_ev, "ev_rank")
-      st.caption("推定EVは過去実績ベースの目安であり、的中や回収を保証するものではありません。")
+      st.caption("推定回収率は「その買い目そのもの」の過去実績（組み合わせ・予想家・会場・軸車番）のブレンド推定であり、的中や回収を保証するものではありません。")
+
+
 elif app_mode == "🧮 ミッドナイト買い目 回収率チェッカー":
   import datetime as _dt
 

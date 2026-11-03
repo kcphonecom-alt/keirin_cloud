@@ -344,6 +344,20 @@ def iter_predictions(memos, results_by_id):
             }
 
 
+def _venue_of(race_id):
+    """レースID '20261102_静岡_7R_d2' から会場を取り出す。"""
+    parts = str(race_id).split("_")
+    return parts[1] if len(parts) >= 2 else "?"
+
+
+def _axis_of(bet_type, combo):
+    """順序あり券種（2車単・3連単）では先頭車番を「軸」として扱う。"""
+    if bet_type in ("2車単", "3連単"):
+        head = str(combo).split("-")[0]
+        return head if head.isdigit() else None
+    return None
+
+
 def _new_stat():
     return {"points": 0, "hit_points": 0, "return_yen": 0, "races": set(), "hit_races": set()}
 
@@ -364,15 +378,26 @@ def build_history(memos, results_by_id, smooth=50.0):
     """
     by_author_type = defaultdict(_new_stat)
     by_type = defaultdict(_new_stat)
+    by_combo = defaultdict(_new_stat)
+    by_author_combo = defaultdict(_new_stat)
+    by_venue_type = defaultdict(_new_stat)
+    by_axis_type = defaultdict(_new_stat)
     combo_map = {}
 
     for pred in iter_predictions(memos, results_by_id):
         if not pred["has_result"]:
             continue
+        venue = _venue_of(pred["レースID"])
         combos = expand_bets(pred["買い目原文"], pred["result"], pred["payout_raw"])
         for c in combos:
             _add(by_author_type[(pred["予想家"], c["券種"])], c["的中"], c["払戻"], pred["レースID"])
             _add(by_type[c["券種"]], c["的中"], c["払戻"], pred["レースID"])
+            _add(by_combo[(c["券種"], c["買い目"])], c["的中"], c["払戻"], pred["レースID"])
+            _add(by_author_combo[(pred["予想家"], c["券種"], c["買い目"])], c["的中"], c["払戻"], pred["レースID"])
+            _add(by_venue_type[(venue, c["券種"])], c["的中"], c["払戻"], pred["レースID"])
+            axis = _axis_of(c["券種"], c["買い目"])
+            if axis is not None:
+                _add(by_axis_type[(c["券種"], axis)], c["的中"], c["払戻"], pred["レースID"])
             key = (pred["レースID"], c["券種"], c["買い目"])
             info = combo_map.setdefault(key, {"authors": set(), "hit": False, "payout": 0})
             info["authors"].add(pred["予想家"])
@@ -388,6 +413,10 @@ def build_history(memos, results_by_id, smooth=50.0):
     return {
         "by_author_type": by_author_type,
         "by_type": by_type,
+        "by_combo": by_combo,
+        "by_author_combo": by_author_combo,
+        "by_venue_type": by_venue_type,
+        "by_axis_type": by_axis_type,
         "consensus": consensus,
         "smooth": float(smooth),
         "combo_count": len(combo_map),
@@ -421,6 +450,40 @@ def hit_rate(stat, global_stat, smooth):
         return 0.0
     g_rate = _global_hit_rate(global_stat)
     return (stat["hit_points"] + smooth * g_rate) / (stat["points"] + smooth)
+
+
+def _blend_estimates(slices, global_stat):
+    """複数の実績スライスをサンプル点数で重み付けしてブレンドする。
+
+    slices: [(ラベル, stat, 平滑化K)]。各スライスは券種全体の平均へ
+    平滑化してから、点数ウェイトで合成する。
+    戻り値: (推定回収率[1.0=100%], 推定的中率, 合計点数, 内訳文字列)
+    """
+    if global_stat is None or global_stat["points"] == 0:
+        return 0.0, 0.0, 0, ""
+    g_yen = _global_ev_yen(global_stat)
+    g_rate = _global_hit_rate(global_stat)
+    ev_num = 0.0
+    hr_num = 0.0
+    w_sum = 0.0
+    total_points = 0
+    parts = []
+    for label, stat, k in slices:
+        if stat is None or stat["points"] == 0:
+            continue
+        w = float(stat["points"])
+        ev_i = (stat["return_yen"] + k * g_yen) / (stat["points"] + k)
+        hr_i = (stat["hit_points"] + k * g_rate) / (stat["points"] + k)
+        ev_num += w * ev_i
+        hr_num += w * hr_i
+        w_sum += w
+        total_points += stat["points"]
+        parts.append((stat["points"], f"{label}:{stat['points']:,}点"))
+    if w_sum == 0:
+        return g_yen / 100.0, g_rate, 0, ""
+    parts.sort(reverse=True)
+    breakdown = " / ".join(p for _, p in parts[:3])
+    return (ev_num / w_sum) / 100.0, hr_num / w_sum, total_points, breakdown
 
 
 def score_upcoming(
@@ -464,28 +527,45 @@ def score_upcoming(
             )
             info["authors"].add(pred["予想家"])
 
+    by_combo = stats.get("by_combo", {})
+    by_author_combo = stats.get("by_author_combo", {})
+    by_venue_type = stats.get("by_venue_type", {})
+    by_axis_type = stats.get("by_axis_type", {})
+
     rows = []
     for (race_id, bet_type, combo), info in combo_map.items():
         authors = sorted(info["authors"])
         gstat = by_type.get(bet_type)
+        venue = _venue_of(race_id)
+        axis = _axis_of(bet_type, combo)
 
-        # 予想家実績ベース（最もEVの高い予想家を採用）
-        best_author, best_ev, best_hr = None, -1.0, 0.0
+        # 買い目単位のブレンド推定: 「その組み合わせ自体」「予想家×組み合わせ」
+        # 「予想家×券種」「会場×券種」「軸車番×券種」の実績をサンプル数で合成する。
+        # 予想家が複数いる場合は、根拠サンプルが最も厚い予想家のブレンドを採用する。
+        best = None
         for a in authors:
-            st = by_author_type.get((a, bet_type))
-            if st is None:
-                continue
-            ev = ev_ratio(st, gstat, smooth)
-            if ev > best_ev:
-                best_author, best_ev = a, ev
-                best_hr = hit_rate(st, gstat, smooth)
-        if best_author is None:
+            slices = [
+                (f"{a}×組合せ", by_author_combo.get((a, bet_type, combo)), 20.0),
+                (f"組合せ{combo}", by_combo.get((bet_type, combo)), 30.0),
+                (f"{a}×{bet_type}", by_author_type.get((a, bet_type)), smooth),
+                (f"会場{venue}", by_venue_type.get((venue, bet_type)), 50.0),
+            ]
+            if axis is not None:
+                slices.append(
+                    (f"軸{axis}番", by_axis_type.get((bet_type, axis)), 30.0)
+                )
+            ev_a, hr_a, used_a, breakdown_a = _blend_estimates(slices, gstat)
+            if (
+                best is None
+                or used_a > best[2]
+                or (used_a == best[2] and ev_a > best[0])
+            ):
+                best = (ev_a, hr_a, used_a, breakdown_a, a)
+        if best is None:
             continue
 
-        ev = best_ev
-        hr = best_hr
-        basis = f"予想家実績:{best_author}"
-        sample = by_author_type[(best_author, bet_type)]["points"]
+        ev, hr, sample, breakdown, best_author = best
+        basis = f"買い目別ブレンド（{best_author}軸）"
 
         # コンセンサス実績が十分あれば、予想家実績とブレンドして使う
         # （コンセンサス単独だと同一券種の全買い目が同じEVになり順位が付かないため）
@@ -496,8 +576,7 @@ def score_upcoming(
             cons_hr = hit_rate(cons, gstat, smooth)
             ev = 0.6 * cons_ev + 0.4 * ev
             hr = 0.6 * cons_hr + 0.4 * hr
-            basis = f"コンセンサス{bucket}名以上" if bucket == 3 else f"コンセンサス{bucket}名"
-            sample = cons["points"]
+            basis += f"＋コンセンサス{bucket}名"
 
         odds = odds_map.get((race_id, bet_type, combo))
         if odds:
@@ -506,6 +585,7 @@ def score_upcoming(
 
         rows.append({
             "レースID": race_id,
+            "会場": venue,
             "発走時間": info["発走時間"],
             "券種": bet_type,
             "買い目": combo,
@@ -515,6 +595,7 @@ def score_upcoming(
             "推定回収率%": round(ev * 100, 1),
             "推定的中率%": round(hr * 100, 2),
             "根拠": basis,
+            "根拠内訳": breakdown,
             "根拠サンプル点数": sample,
             "オッズ": odds if odds else "",
         })
