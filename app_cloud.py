@@ -17,6 +17,11 @@ try:
 except Exception:
   ev_v2 = None
 
+try:
+  import backtest_ev
+except Exception:
+  backtest_ev = None
+
 # psycopg2 の安全なインポート
 try:
   import psycopg2
@@ -473,6 +478,7 @@ app_mode = st.sidebar.radio(
         "🤖 ミッドナイトAI自動探索 (黄金比率の発見)",
         "🎯 買い目別 EVランキング",
         "🎯 EV v2 確率モデル買い目算出",
+        "🧪 EVバックテスト（実力測定）",
         "📈 PRO予想家別 回収率アナリティクス (全券種分解)",
         "👤 PRO予想家 深掘り個別アナリティクス",
         "PRO予想 1×2列目MIX分析",
@@ -1613,6 +1619,95 @@ elif app_mode == "🎯 EV v2 確率モデル買い目算出":
         st.subheader("📊 EVランキング v2（全候補）")
         show_df_responsive(ranked_v2, "ev2_rank")
       st.caption("推定回収率は確率モデル（選手データ＋PRO支持＋車番の着順傾向）と、オッズ未入力の場合は券種ごとの的中時平均払戻から推定したもので、的中や回収を保証するものではありません。")
+
+
+elif app_mode == "🧪 EVバックテスト（実力測定）":
+  st.title("🧪 EVバックテスト（実力測定）")
+  st.markdown(
+      "過去のレースで「その日より前のデータだけで学習 → 当日の買い目を算出 → 実際の払戻と照合」を繰り返し、"
+      "**もしこの買い方をしていたら回収率は何%だったか** を測る健康診断ページです。"
+      "未来の情報は一切使わない（walk-forward）ので、出てきた数字がそのまま実力の目安になります。"
+  )
+  if backtest_ev is None or ev_engine is None:
+    st.error("backtest_ev / ev_engine モジュールが読み込めませんでした。デプロイに backtest_ev.py と ev_engine.py が含まれているか確認してください。")
+  else:
+    df_players_bt, df_memos_bt, df_results_bt = load_replica_data()
+    if df_memos_bt.empty or df_results_bt.empty:
+      st.warning("有効なデータが見つかりませんでした。")
+    else:
+      c1, c2, c3 = st.columns(3)
+      engine_bt = c1.radio("測定するエンジン", ["v2（確率モデル）", "v1（過去実績ベース）"], key="bt_engine")
+      scope_bt = c2.radio("対象レース", ["ミッドナイトのみ", "全体"], key="bt_scope")
+      days_bt = c3.slider("検証する日数（直近）", 7, 60, 14, key="bt_days")
+      c4, c5, c6 = st.columns(3)
+      budget_bt = c4.number_input("1日の予算（円）", min_value=100, max_value=100000, value=1500, step=100, key="bt_budget")
+      min_train_bt = c5.number_input("学習に必要な最低レース数", min_value=50, max_value=5000, value=200, step=50, key="bt_min_train")
+      bet_types_bt = c6.multiselect("対象券種", ev_engine.BET_TYPES, default=["2車単", "ワイド"], key="bt_bet_types")
+      st.caption("日数が多いほど信頼度は上がりますが、計算時間も長くなります（v2・14日で数分程度が目安）。")
+      if st.button("▶ バックテストを実行", key="bt_run"):
+        scorer_bt = None
+        if engine_bt.startswith("v2"):
+          if ev_v2 is None:
+            st.error("ev_v2 モジュールが読み込めませんでした。デプロイに ev_v2.py が含まれているか確認してください。")
+          else:
+            players_bt = ev_v2.frames_to_players(df_players_bt)
+            scorer_bt = backtest_ev.v2_scorer(
+                players_bt,
+                midnight_only=(scope_bt == "ミッドナイトのみ"),
+                bet_types=bet_types_bt or None,
+            )
+        else:
+          scorer_bt = backtest_ev.v1_scorer(
+              midnight_only=(scope_bt == "ミッドナイトのみ"),
+              bet_types=bet_types_bt or None,
+          )
+        if scorer_bt is not None:
+          memos_bt, results_by_id_bt = ev_engine.frames_to_inputs(df_memos_bt, df_results_bt)
+          bar_bt = st.progress(0.0)
+          status_bt = st.empty()
+          state_bt = {"done": 0}
+
+          def _bt_progress(date, n_train, n_cand):
+            state_bt["done"] += 1
+            bar_bt.progress(min(state_bt["done"] / max(int(days_bt), 1), 1.0))
+            status_bt.write(f"検証中: {date}（学習 {n_train} レース / 当日候補 {n_cand} 点）")
+
+          with st.spinner("バックテスト計算中…"):
+            summary_bt, picks_bt = backtest_ev.walk_forward(
+                memos_bt,
+                results_by_id_bt,
+                scorer_bt,
+                budget_per_day=int(budget_bt),
+                min_train_races=int(min_train_bt),
+                recent_days=int(days_bt),
+                progress=_bt_progress,
+            )
+          st.session_state["bt_summary"] = summary_bt
+          st.session_state["bt_picks"] = picks_bt
+      if "bt_summary" in st.session_state:
+        summary_show = st.session_state["bt_summary"]
+        picks_show = st.session_state["bt_picks"]
+        st.subheader("📊 結果サマリー（戦略別）")
+        show_df_responsive(summary_show, "bt_summary")
+        row10 = summary_show[summary_show["戦略"] == "EV>=1.0"]
+        if not row10.empty:
+          r10 = row10.iloc[0]
+          st.metric("EV>=1.0 戦略の回収率", f"{r10['回収率%']}%")
+          st.write(
+              f"対象 {int(r10['対象日数'])} 日 ／ {int(r10['点数'])} 点 ／ "
+              f"投資 {int(r10['総投資']):,}円 → 払戻 {int(r10['総払戻']):,}円 ／ 的中 {int(r10['的中点数'])} 点"
+          )
+        if picks_show is not None and not picks_show.empty:
+          st.subheader("🎯 採用ピック明細")
+          show_df_responsive(picks_show, "bt_picks")
+          st.download_button(
+              "ピック明細をCSVでダウンロード",
+              picks_show.to_csv(index=False).encode("utf-8-sig"),
+              file_name="backtest_picks.csv",
+              mime="text/csv",
+              key="bt_csv",
+          )
+      st.caption("回収率は過去データでの検証結果であり、将来の的中や回収を保証するものではありません。点数が少ないうちは数字が大きく振れるので、日数を増やしてから判断してください。")
 
 
 elif app_mode == "🧮 ミッドナイト買い目 回収率チェッカー":
