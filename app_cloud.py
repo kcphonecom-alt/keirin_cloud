@@ -12,6 +12,11 @@ try:
 except Exception:
   ev_engine = None
 
+try:
+  import ev_v2
+except Exception:
+  ev_v2 = None
+
 # psycopg2 の安全なインポート
 try:
   import psycopg2
@@ -467,6 +472,7 @@ app_mode = st.sidebar.radio(
         "🌙 ミッドナイト高回収率 ＆ PRO予想融合シミュレータ",
         "🤖 ミッドナイトAI自動探索 (黄金比率の発見)",
         "🎯 買い目別 EVランキング",
+        "🎯 EV v2 確率モデル買い目算出",
         "📈 PRO予想家別 回収率アナリティクス (全券種分解)",
         "👤 PRO予想家 深掘り個別アナリティクス",
         "PRO予想 1×2列目MIX分析",
@@ -1540,6 +1546,73 @@ elif app_mode == "🎯 買い目別 EVランキング":
         st.subheader("📊 EVランキング（全候補）")
         show_df_responsive(ranked_ev, "ev_rank")
       st.caption("推定回収率は「その買い目そのもの」の過去実績（組み合わせ・予想家・会場・軸車番）のブレンド推定であり、的中や回収を保証するものではありません。")
+
+
+elif app_mode == "🎯 EV v2 確率モデル買い目算出":
+  st.title("🎯 EV v2 確率モデル買い目算出")
+  st.markdown(
+      "player_stats（競走得点・勝率・AI印）と当日のPRO予想から **各車の着順確率** を作り、"
+      "Harville式（着順別確率版）で買い目ごとの的中確率に展開して、期待値の高い順に並べます。"
+      "v1（過去の買い目パターンの払戻実績ベース）とは推定の作り方が異なるので、"
+      "walk-forwardバックテストでの実測回収率とあわせて判断してください。"
+  )
+  if ev_v2 is None:
+    st.error("ev_v2 モジュールが読み込めませんでした。デプロイに ev_v2.py が含まれているか確認してください。")
+  else:
+    df_players_v2, df_memos_v2, df_results_v2 = load_replica_data()
+    if df_memos_v2.empty or df_results_v2.empty:
+      st.warning("有効なデータが見つかりませんでした。")
+    else:
+      c1, c2, c3 = st.columns(3)
+      scope_v2 = c1.radio("対象レース", ["ミッドナイトのみ", "PRO全体"], key="v2_scope")
+      target_date_v2 = c2.date_input("対象日（この日以降）", value=datetime.now().date(), key="v2_date")
+      budget_v2 = c3.number_input("予算（円）", min_value=100, max_value=100000, value=1500, step=100, key="v2_budget")
+      c4, c5, c6 = st.columns(3)
+      min_ev_v2 = c4.slider("最低期待回収率（%）", 50, 300, 100, key="v2_min_ev")
+      bet_types_v2 = c5.multiselect("対象券種", ev_v2.BET_TYPES, default=["2車単", "ワイド"], key="v2_bet_types")
+      require_pro_v2 = c6.checkbox("PRO予想があるレースのみ", value=True, key="v2_require_pro")
+      odds_text_v2 = st.text_area(
+          "現在オッズ（任意）: 1行ごとに「レースID,券種,買い目,オッズ」",
+          placeholder="20261102_名古屋_7R_d1,2車単,3-2,15.6",
+          key="v2_odds",
+      )
+      odds_map_v2 = {}
+      for line in odds_text_v2.splitlines():
+        parts = [x.strip() for x in line.split(",")]
+        if len(parts) == 4:
+          try:
+            odds_map_v2[(parts[0], parts[1], parts[2])] = float(parts[3])
+          except ValueError:
+            pass
+
+      memos_v2, results_v2 = ev_engine.frames_to_inputs(df_memos_v2, df_results_v2)
+      stats_v2 = ev_v2.build_history_v2(memos_v2, results_v2)
+      players_by_race_v2 = ev_v2.frames_to_players(df_players_v2)
+      ranked_v2 = ev_v2.score_upcoming_v2(
+          memos_v2,
+          results_v2,
+          players_by_race_v2,
+          stats_v2,
+          midnight_only=(scope_v2 == "ミッドナイトのみ"),
+          bet_types=bet_types_v2 or None,
+          odds_map=odds_map_v2,
+          from_date=target_date_v2.strftime("%Y%m%d"),
+          require_pro=require_pro_v2,
+      )
+      if ranked_v2.empty:
+        st.warning("この条件では候補が0件でした。対象日を過去に変えるか、PRO予想のあるレースのみのチェックを外してみてください。")
+      else:
+        alloc_v2, summary_v2 = ev_engine.allocate(
+            ranked_v2, budget_yen=int(budget_v2), min_ev=min_ev_v2 / 100.0
+        )
+        st.subheader(f"💴 予算配分案（{summary_v2['points']}点 / {summary_v2['amount']:,}円）")
+        if alloc_v2.empty:
+          st.info("最低期待回収率を超える買い目がありませんでした。下のランキングから個別に選んでください。")
+        else:
+          show_df_responsive(alloc_v2, "ev2_alloc")
+        st.subheader("📊 EVランキング v2（全候補）")
+        show_df_responsive(ranked_v2, "ev2_rank")
+      st.caption("推定回収率は確率モデル（選手データ＋PRO支持＋車番の着順傾向）と、オッズ未入力の場合は券種ごとの的中時平均払戻から推定したもので、的中や回収を保証するものではありません。")
 
 
 elif app_mode == "🧮 ミッドナイト買い目 回収率チェッカー":
