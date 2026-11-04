@@ -121,8 +121,12 @@ def _race_date(race_id: str) -> str:
 def walk_forward(memos, results_by_id, scorer,
                  thresholds=(0.8, 1.0, 1.2, 1.5),
                  budget_per_day=1500, stake_yen=100,
-                 min_train_races=100, max_days=None, progress=None):
+                 min_train_races=100, max_days=None, progress=None,
+                 recent_days=None):
     """開催日単位で walk-forward 評価する。
+
+    recent_days を指定すると、検証対象を直近その日数分だけに絞る
+    (学習データはそれ以前の全期間を使う)。アプリ内実行用の軽量化オプション。
 
     戻り値: (summary_df, picks_df)
       summary_df: 戦略ごとの集計 (ベースライン含む)
@@ -140,6 +144,7 @@ def walk_forward(memos, results_by_id, scorer,
         all_memos_by_id[str(memo.get("レースID", ""))].append(memo)
 
     dates = sorted({_race_date(rid) for rid in resulted_ids if rid in all_memos_by_id})
+    testable_dates = set(dates[-recent_days:]) if recent_days else None
     # 日付ごとに、その日のメモと、それ以前の学習データを切り分ける
     memos_by_date = defaultdict(list)
     for memo in memos:
@@ -160,7 +165,8 @@ def walk_forward(memos, results_by_id, scorer,
         todays_memos = [m for m in memos_by_date.get(date, [])
                         if str(m.get("レースID", "")) in todays_ids]
         # 学習データが足りない初期期間はスキップ (ただし学習には積む)
-        if len(train_results) >= min_train_races and todays_memos:
+        if (len(train_results) >= min_train_races and todays_memos
+                and (testable_dates is None or date in testable_dates)):
             if max_days is not None and tested_days >= max_days:
                 pass
             else:
