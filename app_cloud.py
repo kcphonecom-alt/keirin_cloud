@@ -1967,7 +1967,13 @@ elif app_mode == "🧮 ミッドナイト買い目 回収率チェッカー":
 # 11. ミッドナイト特選 123BOX決着リスト
 # ==========================================
 elif app_mode == "🎁 ミッドナイト特選 123BOX決着リスト":
+  import importlib as _il_box
+
   import midnight_checker as _mc_box
+
+  if not hasattr(_mc_box, "box123_scan"):
+    # デプロイ直後は古いモジュールがメモリに残ることがあるため読み直す
+    _mc_box = _il_box.reload(_mc_box)
 
   st.title("🎁 ミッドナイト特選 123BOX決着リスト")
   st.caption(
