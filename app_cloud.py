@@ -484,6 +484,7 @@ app_mode = st.sidebar.radio(
     "利用する機能を選択してください",
     [
         "🧮 ミッドナイト買い目 回収率チェッカー",
+        "🎁 ミッドナイト特選 123BOX決着リスト",
         "🌙 ミッドナイト高回収率 ＆ PRO予想融合シミュレータ",
         "🤖 ミッドナイトAI自動探索 (黄金比率の発見)",
         "🚧工事中｜🎯 買い目別 EVランキング",
@@ -1961,3 +1962,54 @@ elif app_mode == "🧮 ミッドナイト買い目 回収率チェッカー":
       else:
         st.info("この日のミッドナイトの結果データはまだありません（レース前、または未同期の可能性があります）。")
     st.caption("払戻金は公式払戻（100円あたり）をもとに、1点の金額へ比例換算しています。")
+
+# ==========================================
+# 11. ミッドナイト特選 123BOX決着リスト
+# ==========================================
+elif app_mode == "🎁 ミッドナイト特選 123BOX決着リスト":
+  import midnight_checker as _mc_box
+
+  st.title("🎁 ミッドナイト特選 123BOX決着リスト")
+  st.caption(
+      "ミッドナイト（発走20:35以降）の特選で、1・2・3番車がそのまま1〜3着を占めた（順序不問＝BOX決着）レースを全期間から抽出します。"
+      "DBに特選フラグが無いため、特選は「その会場・その開催日の最終レース」で代用しています。"
+  )
+
+  tokusen_only_box = st.checkbox("特選（その日の最終レース）のみ", value=True)
+
+  _, _, _df_res_box = load_replica_data()
+  if _df_res_box.empty:
+    st.warning("結果データを読み込めませんでした。")
+  else:
+    _summary_box, _rows_box = _mc_box.box123_scan(
+        _df_res_box.to_dict("records"), tokusen_only=tokusen_only_box
+    )
+    _n_target = _summary_box["対象レース数"]
+    _n_hit = _summary_box["該当レース数"]
+    if _rows_box:
+      _df_box = pd.DataFrame(_rows_box)
+      _ret_3f = int(_df_box["3連複払戻"].sum())
+      _ret_3t = int(_df_box["3連単払戻"].sum())
+      _rate_hit = _n_hit / _n_target * 100 if _n_target else 0.0
+      _rate_3f = _ret_3f / (_n_target * 100) * 100 if _n_target else 0.0
+      _rate_3t = _ret_3t / (_n_target * 600) * 100 if _n_target else 0.0
+
+      m1, m2, m3, m4 = st.columns(4)
+      m1.metric("該当レース", f"{_n_hit} 件")
+      m2.metric("BOX決着の割合", f"{_rate_hit:.1f}%", help=f"対象 {_n_target} レース中")
+      m3.metric("3連複1点買い 回収率", f"{_rate_3f:.1f}%")
+      m4.metric("3連単BOX6点 回収率", f"{_rate_3t:.1f}%")
+      st.write(
+          f"対象 {_n_target} レース ／ 着順がちょうど 3-2-1 だったのは {_summary_box['着順3-2-1の件数']} 件。"
+          f"毎回買っていた場合: 3連複（100円×全レース）払戻合計 {_ret_3f:,}円、"
+          f"3連単BOX（600円×全レース）払戻合計 {_ret_3t:,}円。"
+      )
+      show_df_responsive(_df_box, "box123_rows", head_cols=2)
+      st.download_button(
+          "📥 一覧をCSVでダウンロード",
+          _df_box.to_csv(index=False).encode("utf-8-sig"),
+          file_name="midnight_tokusen_123box.csv",
+          mime="text/csv",
+      )
+    else:
+      st.info(f"該当レースはありませんでした（対象 {_n_target} レース）。")

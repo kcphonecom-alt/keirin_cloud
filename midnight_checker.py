@@ -119,3 +119,63 @@ def check(records, target_date, bet_type, cars, stake=100):
         "組番": key,
     }
     return summary, rows
+
+
+def box123_scan(records, tokusen_only=True):
+    """ミッドナイトで 1・2・3番車がそのまま1〜3着を占めた（順序不問）レースを全期間から抽出する。
+
+    特選の定義: DBに特選フラグが無いため「その会場・その開催日の最終レース」で代用する。
+    tokusen_only=True のとき最終レースのみ、False のときミッドナイト全レースが対象。
+    戻り値: (summary dict, rows list)。rows は新しい順。
+    """
+    # 会場×開催日ごとの最大レース番号（=最終レース）を作る
+    last_race = {}
+    midnight = []
+    for rec in records:
+        info = parse_race_id(rec.get("レースID"))
+        if not info:
+            continue
+        if rec.get("is_canceled"):
+            continue
+        if not rec.get("1着車番"):
+            continue
+        if not is_midnight_time(rec.get("発走時間")):
+            continue
+        midnight.append((info, rec))
+        key = (info["race_date"], info["venue"])
+        if info["race_no"] > last_race.get(key, 0):
+            last_race[key] = info["race_no"]
+
+    rows = []
+    for info, rec in midnight:
+        if tokusen_only and info["race_no"] != last_race[(info["race_date"], info["venue"])]:
+            continue
+        try:
+            top3 = [int(float(rec.get(c))) for c in ("1着車番", "2着車番", "3着車番")]
+        except (TypeError, ValueError):
+            continue
+        if sorted(top3) != [1, 2, 3]:
+            continue
+        pay = payout_map(rec)
+        rows.append({
+            "日付": info["race_date"].isoformat(),
+            "会場": info["venue"],
+            "レース": f"{info['race_no']}R",
+            "発走": rec.get("発走時間"),
+            "結果": f"{top3[0]}-{top3[1]}-{top3[2]}",
+            "着順3-2-1": top3 == [3, 2, 1],
+            "3連単払戻": pay.get(("3連単", f"{top3[0]}-{top3[1]}-{top3[2]}"), 0),
+            "3連複払戻": pay.get(("3連複", "1=2=3"), 0),
+            "2車単払戻": pay.get(("2車単", f"{top3[0]}-{top3[1]}"), 0),
+        })
+    rows.sort(key=lambda r: (r["日付"], str(r["発走"])), reverse=True)
+    n_tokusen = sum(
+        1 for info, _ in midnight
+        if info["race_no"] == last_race[(info["race_date"], info["venue"])]
+    )
+    summary = {
+        "該当レース数": len(rows),
+        "対象レース数": n_tokusen if tokusen_only else len(midnight),
+        "着順3-2-1の件数": sum(1 for r in rows if r["着順3-2-1"]),
+    }
+    return summary, rows
