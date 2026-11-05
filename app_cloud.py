@@ -24,6 +24,11 @@ except Exception:
 
 try:
   import pro_trends
+  if not hasattr(pro_trends, "type_stats"):
+    # デプロイ直後は古いモジュールがメモリに残ることがあるため読み直す
+    import importlib
+
+    pro_trends = importlib.reload(pro_trends)
 except Exception:
   pro_trends = None
 
@@ -1765,13 +1770,16 @@ elif app_mode == "📊 PRO傾向＆会場別 勝ち筋分析":
       st.caption("軸の1着包含率 = 軸（1列目）に実際の1着が含まれていた割合。着順カバー率 = フォーメーションが実際の1〜3着をすべて含んでいた割合。")
 
       st.subheader("🏷️ PROタイプ分類（一発型か安定型か）")
-      ts_pt = pro_trends.type_stats(df_pt)
-      show_df_responsive(ts_pt, "pt_type")
-      st.caption(
-          "型の自動判定: 大当たり寄与（単レースで投資の3倍以上返った払戻が総払戻に占める割合）が55%以上なら「一発型」、"
-          "的中率50%以上かつ的中時の平均払戻が1,600円以下なら「安定・拡散型」、それ以外は「バランス型」。"
-          "一発型は丸乗りすると外れが続くため、下のサテライト・シミュレーターのように条件付きで小さく混ぜる使い方が向いています。"
-      )
+      if not hasattr(pro_trends, "type_stats"):
+        st.info("更新の反映待ちです。少し待ってからページを再読み込みしてください。")
+      else:
+        ts_pt = pro_trends.type_stats(df_pt)
+        show_df_responsive(ts_pt, "pt_type")
+        st.caption(
+            "型の自動判定: 大当たり寄与（単レースで投資の3倍以上返った払戻が総払戻に占める割合）が55%以上なら「一発型」、"
+            "的中率50%以上かつ的中時の平均払戻が1,600円以下なら「安定・拡散型」、それ以外は「バランス型」。"
+            "一発型は丸乗りすると外れが続くため、下のサテライト・シミュレーターのように条件付きで小さく混ぜる使い方が向いています。"
+        )
 
       st.subheader("🤝 MIXパターン検証（PRO 2人の相性）")
       authors_pt = sorted(df_pt["予想家"].unique().tolist())
@@ -1838,6 +1846,8 @@ elif app_mode == "📊 PRO傾向＆会場別 勝ち筋分析":
             )
             st.caption("「軸一致ミックス」は2人の軸（1列目）が一致したレースだけが対象です。単独成績とは対象レースが異なるため、回収率の比較は目安として見てください。")
       st.subheader("🛰️ サテライト・シミュレーター（主軸＋条件付きで混ぜる）")
+      if not hasattr(pro_trends, "satellite_simulation"):
+        st.info("更新の反映待ちです。少し待ってからページを再読み込みしてください。")
       st.markdown(
           "主軸PROを中心に、サテライトPRO（一発型など）を**条件が合ったレースだけ・予算の一部だけ**混ぜたら"
           "回収率がどう変わったかを、過去データで試算します。"
@@ -1848,15 +1858,19 @@ elif app_mode == "📊 PRO傾向＆会場別 勝ち筋分析":
       sat_options_pt = [x for x in authors_pt if x != base_pt]
       sat_default_pt = "てんぐり" if "てんぐり" in sat_options_pt else sat_options_pt[0]
       sat_pt = c_pt4.selectbox("サテライトPRO", sat_options_pt, index=sat_options_pt.index(sat_default_pt), key="pt_sat")
+      sat_conditions_pt = getattr(
+          pro_trends, "SAT_CONDITIONS",
+          ["常時", "得意会場のみ", "軸一致時のみ", "軸不一致時のみ"],
+      )
       cond_pt = st.selectbox(
           "サテライトを作動させる条件",
-          pro_trends.SAT_CONDITIONS,
-          index=pro_trends.SAT_CONDITIONS.index("得意会場のみ"),
+          sat_conditions_pt,
+          index=sat_conditions_pt.index("得意会場のみ"),
           key="pt_cond",
           help="「得意会場のみ」は、サテライトPROの会場別回収率が100%以上（15レース以上）の会場でのみ作動します。",
       )
       share_pt = st.slider("サテライトへの配分（作動したレースの予算のうち）", 5, 40, 20, step=5, key="pt_share")
-      if st.button("🛰️ サテライト試算を実行する", type="primary"):
+      if st.button("🛰️ サテライト試算を実行する", type="primary") and hasattr(pro_trends, "satellite_simulation"):
         rows_sat = []
         for sh in [0.1, 0.2, 0.3]:
           sim_pt = pro_trends.satellite_simulation(
