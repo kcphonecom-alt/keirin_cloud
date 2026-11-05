@@ -1764,6 +1764,15 @@ elif app_mode == "📊 PRO傾向＆会場別 勝ち筋分析":
       show_df_responsive(ss_pt, "pt_style")
       st.caption("軸の1着包含率 = 軸（1列目）に実際の1着が含まれていた割合。着順カバー率 = フォーメーションが実際の1〜3着をすべて含んでいた割合。")
 
+      st.subheader("🏷️ PROタイプ分類（一発型か安定型か）")
+      ts_pt = pro_trends.type_stats(df_pt)
+      show_df_responsive(ts_pt, "pt_type")
+      st.caption(
+          "型の自動判定: 大当たり寄与（単レースで投資の3倍以上返った払戻が総払戻に占める割合）が55%以上なら「一発型」、"
+          "的中率50%以上かつ的中時の平均払戻が1,600円以下なら「安定・拡散型」、それ以外は「バランス型」。"
+          "一発型は丸乗りすると外れが続くため、下のサテライト・シミュレーターのように条件付きで小さく混ぜる使い方が向いています。"
+      )
+
       st.subheader("🤝 MIXパターン検証（PRO 2人の相性）")
       authors_pt = sorted(df_pt["予想家"].unique().tolist())
       c_pt1, c_pt2 = st.columns(2)
@@ -1828,6 +1837,53 @@ elif app_mode == "📊 PRO傾向＆会場別 勝ち筋分析":
                 pd.DataFrame(mix_rows_pt).sort_values("回収率%", ascending=False), "pt_mix"
             )
             st.caption("「軸一致ミックス」は2人の軸（1列目）が一致したレースだけが対象です。単独成績とは対象レースが異なるため、回収率の比較は目安として見てください。")
+      st.subheader("🛰️ サテライト・シミュレーター（主軸＋条件付きで混ぜる）")
+      st.markdown(
+          "主軸PROを中心に、サテライトPRO（一発型など）を**条件が合ったレースだけ・予算の一部だけ**混ぜたら"
+          "回収率がどう変わったかを、過去データで試算します。"
+      )
+      c_pt3, c_pt4 = st.columns(2)
+      base_options_pt = ["ふるだび"] if "ふるだび" in authors_pt else authors_pt[:1]
+      base_pt = c_pt3.selectbox("主軸PRO", authors_pt, index=authors_pt.index(base_options_pt[0]), key="pt_base")
+      sat_options_pt = [x for x in authors_pt if x != base_pt]
+      sat_default_pt = "てんぐり" if "てんぐり" in sat_options_pt else sat_options_pt[0]
+      sat_pt = c_pt4.selectbox("サテライトPRO", sat_options_pt, index=sat_options_pt.index(sat_default_pt), key="pt_sat")
+      cond_pt = st.selectbox(
+          "サテライトを作動させる条件",
+          pro_trends.SAT_CONDITIONS,
+          index=pro_trends.SAT_CONDITIONS.index("得意会場のみ"),
+          key="pt_cond",
+          help="「得意会場のみ」は、サテライトPROの会場別回収率が100%以上（15レース以上）の会場でのみ作動します。",
+      )
+      share_pt = st.slider("サテライトへの配分（作動したレースの予算のうち）", 5, 40, 20, step=5, key="pt_share")
+      if st.button("🛰️ サテライト試算を実行する", type="primary"):
+        rows_sat = []
+        for sh in [0.1, 0.2, 0.3]:
+          sim_pt = pro_trends.satellite_simulation(
+              df_pt, base_pt, sat_pt, share=sh, condition=cond_pt
+          )
+          if sim_pt:
+            rows_sat.append({
+                "サテライト配分": f"{int(sh * 100)}%",
+                "共通レース数": sim_pt["共通レース数"],
+                "作動レース数": sim_pt["作動レース数"],
+                f"{base_pt}単独 回収率%": sim_pt["主軸単独 回収率%"],
+                f"{sat_pt}単独 回収率%": sim_pt["サテライト単独 回収率%"],
+                "合成 回収率%": sim_pt["合成 回収率%"],
+            })
+        if not rows_sat:
+          st.info("2人に共通するレースがありませんでした。")
+        else:
+          cur_pt = pro_trends.satellite_simulation(
+              df_pt, base_pt, sat_pt, share=share_pt / 100, condition=cond_pt
+          )
+          m_pt1, m_pt2, m_pt3 = st.columns(3)
+          m_pt1.metric(f"{base_pt}単独（共通レース）", f"{cur_pt['主軸単独 回収率%']}%")
+          m_pt2.metric(f"合成（配分{share_pt}%）", f"{cur_pt['合成 回収率%']}%",
+                       delta=f"{cur_pt['合成 回収率%'] - cur_pt['主軸単独 回収率%']:+.1f}% vs 主軸単独")
+          m_pt3.metric("作動レース数", f"{cur_pt['作動レース数']} / {cur_pt['共通レース数']}")
+          show_df_responsive(pd.DataFrame(rows_sat), "pt_sat_table")
+          st.caption("試算方法: 1レースの予算を1,000円とし、作動時は主軸とサテライトに予算を配分（払戻は配分比率で比例計算）、非作動時は主軸に全額。共通レース（結果確定・両者とも予想あり）のみが対象です。")
       st.caption("すべて過去データの集計で、将来の的中や回収を保証するものではありません。レース数が少ない組み合わせは数字が大きく振れます。")
 
 
