@@ -24,7 +24,8 @@ def parse_formation(text):
     """
     if not isinstance(text, str) or not text.strip():
         return None
-    parts = re.split(r"[-=]", text.strip())
+    # 区切りは PRO によって表記が違う（'-' / '=' / 'ー' など）ため幅広く対応する
+    parts = re.split(r"[-=ー－–—]", text.strip())
     if len(parts) != 3:
         return None
     cols = []
@@ -195,6 +196,7 @@ if __name__ == "__main__":
     # --- 簡易セルフテスト（合成データ） ---
     assert parse_formation("3-17-1745") == [{3}, {1, 7}, {1, 7, 4, 5}]
     assert parse_formation("45=45-12") == [{4, 5}, {4, 5}, {1, 2}]
+    assert parse_formation("1ー3ー234") == [{1}, {3}, {2, 3, 4}]
     assert parse_formation("") is None
     assert formation_to_text([{3}, {7, 1}, {5, 4}]) == "3-17-45"
     assert parse_finish("3-1-5") == (3, 1, 5)
