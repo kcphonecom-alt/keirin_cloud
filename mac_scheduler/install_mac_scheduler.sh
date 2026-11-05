@@ -18,12 +18,20 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
-for f in pinpoint.py daily_update.py backfill_midnight.py; do
+for f in pinpoint.py daily_update.py; do
   if [ ! -f "$f" ]; then
     echo "❌ $f がこのフォルダにありません。pinpoint.py と同じフォルダで実行してください。"
     exit 1
   fi
 done
+
+# backfill は任意（backfill_midnight.py と backfill.py の両方が揃った場合だけ有効化）
+HAS_BACKFILL=0
+if [ -f backfill_midnight.py ] && [ -f backfill.py ]; then
+  HAS_BACKFILL=1
+else
+  echo "ℹ️ backfill_midnight.py / backfill.py が無いため、03:30の補完ジョブは今回スキップします（PRO予想と全データの自動化は有効になります）"
+fi
 
 PY="$(command -v python3 || true)"
 if [ -z "$PY" ]; then
@@ -140,10 +148,14 @@ mkdir -p logs
 make_plist com.keirin.pinpoint pinpoint "$PIN_TIMES"
 make_plist com.keirin.daily daily "$ONE_2350"
 make_plist com.keirin.daily-sweep daily_yesterday "$ONE_0430"
-make_plist com.keirin.backfill backfill "$ONE_0330"
+LABELS="com.keirin.pinpoint com.keirin.daily com.keirin.daily-sweep"
+if [ "$HAS_BACKFILL" = "1" ]; then
+  make_plist com.keirin.backfill backfill "$ONE_0330"
+  LABELS="$LABELS com.keirin.backfill"
+fi
 
 # --- 有効化 ---
-for label in com.keirin.pinpoint com.keirin.daily com.keirin.daily-sweep com.keirin.backfill; do
+for label in $LABELS; do
   if command -v launchctl >/dev/null 2>&1; then
     launchctl unload "$AGENTS_DIR/$label.plist" 2>/dev/null || true
     launchctl load "$AGENTS_DIR/$label.plist"
@@ -159,7 +171,7 @@ cat <<'DONE'
 
   PRO予想 pinpoint : 07:30 / 09:00 / 12:00 / 15:00 / 18:00 / 21:00 / 23:00
   全データ daily   : 23:50（当日分）＋ 04:30（前日分の取りこぼし回収）
-  補完 backfill    : 03:30（ミッドナイト不足分。無くなれば空振りで終了）
+  補完 backfill    : 03:30（backfill一式がある場合のみ。ミッドナイト不足分の消化用）
 
   ログ確認: このフォルダの logs/ を見る
   停止方法: bash uninstall_mac_scheduler.sh
