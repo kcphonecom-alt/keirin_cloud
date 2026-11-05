@@ -22,6 +22,11 @@ try:
 except Exception:
   backtest_ev = None
 
+try:
+  import pro_trends
+except Exception:
+  pro_trends = None
+
 # psycopg2 の安全なインポート
 try:
   import psycopg2
@@ -479,6 +484,7 @@ app_mode = st.sidebar.radio(
         "🚧工事中｜🎯 買い目別 EVランキング",
         "🎯 EV v2 確率モデル買い目算出",
         "🧪 EVバックテスト（実力測定）",
+        "📊 PRO傾向＆会場別 勝ち筋分析",
         "🚧工事中｜📈 PRO予想家別 回収率アナリティクス (全券種分解)",
         "🚧工事中｜👤 PRO予想家 深掘り個別アナリティクス",
         "🚧工事中｜PRO予想 1×2列目MIX分析",
@@ -1708,6 +1714,121 @@ elif app_mode == "🧪 EVバックテスト（実力測定）":
               key="bt_csv",
           )
       st.caption("回収率は過去データでの検証結果であり、将来の的中や回収を保証するものではありません。点数が少ないうちは数字が大きく振れるので、日数を増やしてから判断してください。")
+
+
+elif app_mode == "📊 PRO傾向＆会場別 勝ち筋分析":
+  st.title("📊 PRO傾向＆会場別 勝ち筋分析")
+  st.markdown(
+      "保存されている全PRO予想（結果が確定したレースのみ）から、**PROごとの会場の得意・不得意**と"
+      "**買い方の傾向**、**PRO同士のMIXパターンの実績**を自動集計します。"
+      "PRO予想のデータが増えれば、数字は自動で更新されます。"
+  )
+  if pro_trends is None:
+    st.error("pro_trends モジュールが読み込めませんでした。デプロイに pro_trends.py が含まれているか確認してください。")
+  else:
+    df_pt = get_parsed_df()
+    if df_pt.empty:
+      st.warning("有効なデータが見つかりませんでした。")
+    else:
+      df_settled_pt = pro_trends.settled_only(df_pt)
+      st.caption(f"集計対象: 結果確定 {len(df_settled_pt):,} 件のPRO予想（保存済み全 {len(df_pt):,} 件中）")
+      min_races_pt = st.slider(
+          "会場別集計の最低レース数（これ未満の組み合わせは一覧に出しません）",
+          5, 60, 20, step=5,
+      )
+
+      st.subheader("🏆 勝ち筋ランキング（PRO × 会場）")
+      vs_pt = pro_trends.venue_stats(df_pt, min_races=min_races_pt)
+      if vs_pt.empty:
+        st.info("条件に合う組み合わせがありません。最低レース数を下げてみてください。")
+      else:
+        top_pt = vs_pt.head(10)
+        bullets_pt = "\n".join(
+            f"- **{r['予想家']} × {r['会場']}**: 回収率 {r['回収率%']}%"
+            f"（{int(r['レース数'])}レース / 的中率 {r['的中レース率%']}% / 信頼度 {r['信頼度']}）"
+            for _, r in top_pt.iterrows()
+        )
+        st.markdown("**回収率が高い組み合わせ 上位10**\n\n" + bullets_pt)
+        show_df_responsive(vs_pt, "pt_venue_rank")
+
+      st.subheader("🏟️ 会場マトリクス（回収率%）")
+      piv_pt = pro_trends.venue_pivot(df_pt, min_races=min_races_pt)
+      if piv_pt.empty:
+        st.info("表示できるマトリクスがありません。")
+      else:
+        show_df_responsive(piv_pt.reset_index(), "pt_venue_pivot")
+        st.caption("空欄は最低レース数に満たない（データ不足）の組み合わせです。100%超は「その会場では払戻が投資を上回った」組み合わせです。")
+
+      st.subheader("🎯 PRO別 買い方スタイル")
+      ss_pt = pro_trends.style_stats(df_pt)
+      show_df_responsive(ss_pt, "pt_style")
+      st.caption("軸の1着包含率 = 軸（1列目）に実際の1着が含まれていた割合。着順カバー率 = フォーメーションが実際の1〜3着をすべて含んでいた割合。")
+
+      st.subheader("🤝 MIXパターン検証（PRO 2人の相性）")
+      authors_pt = sorted(df_pt["予想家"].unique().tolist())
+      c_pt1, c_pt2 = st.columns(2)
+      a_pt = c_pt1.selectbox("PRO A（主軸にしたい人）", authors_pt, index=0, key="pt_a")
+      b_options_pt = [x for x in authors_pt if x != a_pt]
+      b_pt = c_pt2.selectbox("PRO B（組み合わせる人）", b_options_pt, index=0, key="pt_b")
+      if st.button("🔍 MIXパターンを検証する", type="primary"):
+        ps_pt = pro_trends.pair_summary(df_pt, a_pt, b_pt)
+        if ps_pt.empty:
+          st.info("2人に共通するレースがありませんでした。")
+        else:
+          show_df_responsive(ps_pt, "pt_pair")
+          _, _, df_results_pt = load_replica_data()
+          res_map_pt = {}
+          if not df_results_pt.empty and "レースID" in df_results_pt.columns:
+            for _, rr in df_results_pt.iterrows():
+              res_map_pt[str(rr["レースID"])] = (
+                  rr.get("1着車番"), rr.get("2着車番"), rr.get("3着車番"), rr.get("払戻金JSON"),
+              )
+          m_pt = pro_trends.pair_frames(df_pt, a_pt, b_pt)
+          agg_pt = {}
+          for _, r in m_pt.iterrows():
+            info_pt = res_map_pt.get(str(r["レースID"]))
+            if info_pt is None:
+              continue
+            r1x, r2x, r3x, pay_json_pt = info_pt
+            if pd.isnull(r1x) or pd.isnull(r2x) or pd.isnull(r3x):
+              continue
+            for pat_name, pat_text in pro_trends.mix_formations(r["cols_A"], r["cols_B"]).items():
+              if pat_text is None:
+                continue
+              try:
+                _, pts_x, cost_x, got_x, *_rest = parse_bet_string_detailed_rows(
+                    pat_text, r1x, r2x, r3x, 0, 0, 0, pay_json_pt
+                )
+              except Exception:
+                continue
+              d_pt = agg_pt.setdefault(pat_name, {"races": 0, "pts": 0, "cost": 0, "got": 0})
+              d_pt["races"] += 1
+              d_pt["pts"] += pts_x
+              d_pt["cost"] += cost_x
+              d_pt["got"] += got_x
+          mix_rows_pt = []
+          for pat_name, d_pt in agg_pt.items():
+            if d_pt["races"] == 0:
+              continue
+            disp_pt = (
+                pat_name.replace("A軸", f"{a_pt}軸").replace("B軸", f"{b_pt}軸")
+                .replace("A相手", f"{a_pt}相手").replace("B相手", f"{b_pt}相手")
+            )
+            mix_rows_pt.append({
+                "MIXパターン": disp_pt,
+                "対象レース数": d_pt["races"],
+                "平均点数": round(d_pt["pts"] / d_pt["races"], 1),
+                "投資額": f"{d_pt['cost']:,}円",
+                "払戻額": f"{d_pt['got']:,}円",
+                "回収率%": round(d_pt["got"] / d_pt["cost"] * 100, 1) if d_pt["cost"] else 0,
+            })
+          if mix_rows_pt:
+            st.markdown("**合成MIXフォーメーションの実績（実際の払戻金で計算）**")
+            show_df_responsive(
+                pd.DataFrame(mix_rows_pt).sort_values("回収率%", ascending=False), "pt_mix"
+            )
+            st.caption("「軸一致ミックス」は2人の軸（1列目）が一致したレースだけが対象です。単独成績とは対象レースが異なるため、回収率の比較は目安として見てください。")
+      st.caption("すべて過去データの集計で、将来の的中や回収を保証するものではありません。レース数が少ない組み合わせは数字が大きく振れます。")
 
 
 elif app_mode == "🧮 ミッドナイト買い目 回収率チェッカー":
