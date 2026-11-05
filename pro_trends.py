@@ -172,6 +172,108 @@ def pair_summary(df, author_a, author_b):
     return pd.DataFrame([r for r in rows if r])
 
 
+def type_stats(df):
+    """PROごとの「型」指標と自動分類を返す（結果確定分のみ）。
+
+    型の判定ルール（上から順に適用）:
+    - 大当たり寄与（単レース回収率300%以上の払戻が総払戻に占める割合）が
+      55%以上 → 「一発型」
+    - 的中率50%以上 かつ 的中時平均払戻1,600円以下 → 「安定・拡散型」
+    - 的中率50%以上 → 「バランス型」
+    - それ以外 → 「バランス型」
+    """
+    df = settled_only(df)
+    rows = []
+    for author, g in df.groupby("予想家"):
+        g = g.sort_values("レースID")
+        inv = g["投資額"].sum()
+        ret = g["払戻合計"].sum()
+        hits = g[g["払戻合計"] > 0]
+        hit_rate = (g["払戻合計"] > 0).mean() * 100
+        avg_hit = hits["払戻合計"].mean() if len(hits) else 0
+        row_rate = g["払戻合計"] / g["投資額"].where(g["投資額"] > 0) * 100
+        big = g[row_rate >= 300]
+        big_share = (big["払戻合計"].sum() / ret * 100) if ret > 0 else 0.0
+        streak = mx = 0
+        for v in g["払戻合計"]:
+            streak = streak + 1 if v == 0 else 0
+            mx = max(mx, streak)
+        if big_share >= 55:
+            ptype = "一発型"
+        elif hit_rate >= 50 and avg_hit <= 1600:
+            ptype = "安定・拡散型"
+        else:
+            ptype = "バランス型"
+        rows.append({
+            "予想家": author,
+            "型": ptype,
+            "レース数": len(g),
+            "回収率%": round(_rec(ret, inv), 1),
+            "的中率%": round(hit_rate, 1),
+            "的中時平均払戻": f"{avg_hit:,.0f}円",
+            "最大払戻": f"{g['払戻合計'].max():,.0f}円",
+            "大当たり回数（回収率300%+）": int(len(big)),
+            "大当たり寄与%": round(big_share, 1),
+            "最長無払戻連続": int(mx),
+            "信頼度": "高" if len(g) >= 300 else ("中" if len(g) >= 100 else "参考（少数）"),
+        })
+    return pd.DataFrame(rows).sort_values("レース数", ascending=False)
+
+
+SAT_CONDITIONS = ["常時", "得意会場のみ", "軸一致時のみ", "軸不一致時のみ"]
+
+
+def strong_venues(df, author, min_races=15, min_rec=100.0):
+    """そのPROの得意会場（最低レース数以上かつ回収率が基準以上）の集合。"""
+    vs = venue_stats(df[df["予想家"] == author], min_races=min_races)
+    if vs.empty:
+        return set()
+    return set(vs[vs["回収率%"] >= min_rec]["会場"])
+
+
+def satellite_simulation(df, base_author, sat_author, share=0.2,
+                         condition="得意会場のみ", budget=1000):
+    """主軸PROにサテライトPROを予算按分で混ぜた場合の合成回収率を試算する。
+
+    1レースの予算を budget 円とし、サテライト作動時は (1-share) を主軸、
+    share をサテライトに配分（払戻は配分比率で比例計算）。作動しない
+    レースは主軸に全額。共通レース（結果確定・両者とも予想あり）が対象。
+    """
+    m = pair_frames(df, base_author, sat_author)
+    if m.empty:
+        return {}
+    venues_strong = strong_venues(df, sat_author) if condition == "得意会場のみ" else set()
+    m = m.copy()
+    m["会場"] = m["レースID"].str.split("_").str[1]
+    if condition == "常時":
+        m["作動"] = True
+    elif condition == "得意会場のみ":
+        m["作動"] = m["会場"].isin(venues_strong)
+    elif condition == "軸一致時のみ":
+        m["作動"] = m["軸一致"]
+    elif condition == "軸不一致時のみ":
+        m["作動"] = ~m["軸一致"]
+    else:
+        m["作動"] = True
+
+    tot_cost = tot_ret = 0.0
+    for _, r in m.iterrows():
+        sa = budget * (1 - share) if r["作動"] else float(budget)
+        sb = budget * share if r["作動"] else 0.0
+        tot_cost += budget
+        if r["投資額_A"]:
+            tot_ret += r["払戻合計_A"] * sa / r["投資額_A"]
+        if sb and r["投資額_B"]:
+            tot_ret += r["払戻合計_B"] * sb / r["投資額_B"]
+    return {
+        "共通レース数": len(m),
+        "作動レース数": int(m["作動"].sum()),
+        "主軸単独 回収率%": round(_rec(m["払戻合計_A"].sum(), m["投資額_A"].sum()), 1),
+        "サテライト単独 回収率%": round(_rec(m["払戻合計_B"].sum(), m["投資額_B"].sum()), 1),
+        "合成 回収率%": round(_rec(tot_ret, tot_cost), 1),
+    }
+
+
 def mix_formations(cols_a, cols_b):
     """2人のフォーメーションから合成MIXパターンの買い目原文を作る。
 
@@ -230,4 +332,10 @@ if __name__ == "__main__":
     assert ss.iloc[0]["軸の1着包含率%"] == 50.0
     ps = pair_summary(df, "A", "B")
     assert len(ps) == 3 and ps.iloc[1]["レース数"] == 1  # 軸一致は1レース目のみ
+    ts = type_stats(df)
+    assert set(ts["予想家"]) == {"A", "B"} and "型" in ts.columns
+    sim = satellite_simulation(df, "A", "B", share=0.2, condition="常時")
+    assert sim["共通レース数"] == 2 and sim["作動レース数"] == 2
+    sim_v = satellite_simulation(df, "A", "B", share=0.2, condition="得意会場のみ")
+    assert sim_v["作動レース数"] == 0  # 2レースでは得意会場の条件（15レース以上）を満たさない
     print("pro_trends self-test OK")
