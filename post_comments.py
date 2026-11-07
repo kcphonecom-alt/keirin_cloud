@@ -204,7 +204,11 @@ async def main():
         for rid, venue, base_date, day_num, r_num in targets:
             try:
                 url = race_url(venue, base_date, day_num, r_num)
-                txt = await du.fetch_rendered_text(page, url, wait_text="レース後コメント")
+                try:
+                    txt = await du.fetch_rendered_text(page, url, wait_text="レース後コメント")
+                except TypeError:
+                    # Mac側の daily_update.py が古く wait_text 引数が無い場合の互換処理
+                    txt = await du.fetch_rendered_text(page, url)
                 parsed = parse_post_comments(txt, riders.get(rid, {}))
                 if not parsed:
                     continue
