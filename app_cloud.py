@@ -35,7 +35,7 @@ except Exception:
 try:
   import comment_trends
 
-  if not hasattr(comment_trends, "build_frame"):
+  if not hasattr(comment_trends, "build_post_frame"):
     import importlib
 
     comment_trends = importlib.reload(comment_trends)
@@ -1986,9 +1986,49 @@ elif app_mode == "🗣 選手コメント傾向分析":
             st.caption(f"{len(ex_ct)} 件まで表示（着順が空欄のものは結果未確定）")
             show_df_responsive(ex_ct, "ct_examples")
 
+      st.subheader("🏁 レース後コメント × 次走成績")
+      st.markdown(
+          "WINTICKET結果ページの**レース後コメント**（主にS級の一部レース）と、その選手の**次のレースの成績**を照合します。"
+          "「反省していた選手は次に巻き返すのか」「好調を口にした選手は次も来るのか」を見る場所です。"
+      )
+      df_post_ct = pd.DataFrame()
+      try:
+        conn_ct = get_db_connection()
+        df_post_ct = pd.read_sql("SELECT * FROM player_post_comments", conn_ct)
+        conn_ct.close()
+      except Exception:
+        df_post_ct = pd.DataFrame()
+      if df_post_ct.empty:
+        st.info(
+            "レース後コメントはまだ収集されていません。Mac側で post_comments.py を実行すると貯まります"
+            "（対象は直近14日分の確定レース、コメントが付いているレースのみ）。"
+        )
+      else:
+        post_frame_ct = comment_trends.build_post_frame(df_post_ct, df_players_ct, df_results_ct)
+        next_ct = post_frame_ct[post_frame_ct["次走あり"] == True]  # noqa: E712
+        p_ct1, p_ct2 = st.columns(2)
+        p_ct1.metric("収録レース後コメント", f"{len(post_frame_ct):,} 件")
+        p_ct2.metric("次走と結べた件数", f"{len(next_ct):,} 件")
+        if next_ct.empty:
+          st.info("次走と結べたコメントがまだありません（データが増えると集計されます）。")
+        else:
+          st.markdown("**分類別の次走成績**（回収率は次走でその選手を軸に流した場合の試算）")
+          post_cats_ct = comment_trends.post_category_stats(next_ct)
+          if not post_cats_ct.empty:
+            show_df_responsive(post_cats_ct, "ct_post_categories")
+          post_heads_ct = comment_trends.post_headline_stats(next_ct, min_count=5)
+          if not post_heads_ct.empty:
+            st.markdown("**見出しフレーズ別の次走成績**（5件以上）")
+            show_df_responsive(post_heads_ct, "ct_post_headlines")
+          st.markdown("**最近のレース後コメント**")
+          recent_ct = post_frame_ct.sort_values(["開催日", "レースID"], ascending=False)[
+              ["開催日", "会場", "選手名", "着順", "見出し", "次走着順"]
+          ].head(30)
+          show_df_responsive(recent_ct, "ct_post_recent")
+
       st.caption(
-          "注: ここで扱うのは出走前コメントのみです。出走後コメント（談話）は勝者中心にニュース等へ出る形式で、"
-          "全選手分がそろう保存先が現状ないため未収集です。数字は過去データの集計で、将来の的中や回収を保証しません。"
+          "注: レース後コメントはWINTICKETに掲載されるS級の一部レースのみが対象で、全レース分はそろいません。"
+          "数字は過去データの集計で、将来の的中や回収を保証しません。"
           "件数が少ない組み合わせは数字が大きく振れるため、信頼度の表示とあわせて判断してください。"
       )
 
