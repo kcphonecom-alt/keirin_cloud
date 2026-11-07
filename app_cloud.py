@@ -32,6 +32,16 @@ try:
 except Exception:
   pro_trends = None
 
+try:
+  import comment_trends
+
+  if not hasattr(comment_trends, "build_frame"):
+    import importlib
+
+    comment_trends = importlib.reload(comment_trends)
+except Exception:
+  comment_trends = None
+
 # psycopg2 の安全なインポート
 try:
   import psycopg2
@@ -491,6 +501,7 @@ app_mode = st.sidebar.radio(
         "🎯 EV v2 確率モデル買い目算出",
         "🧪 EVバックテスト（実力測定）",
         "📊 PRO傾向＆会場別 勝ち筋分析",
+        "🗣 選手コメント傾向分析",
         "🚧工事中｜📈 PRO予想家別 回収率アナリティクス (全券種分解)",
         "🚧工事中｜👤 PRO予想家 深掘り個別アナリティクス",
         "🚧工事中｜PRO予想 1×2列目MIX分析",
@@ -1900,6 +1911,86 @@ elif app_mode == "📊 PRO傾向＆会場別 勝ち筋分析":
           show_df_responsive(pd.DataFrame(rows_sat), "pt_sat_table")
           st.caption("試算方法: 1レースの予算を1,000円とし、作動時は主軸とサテライトに予算を配分（払戻は配分比率で比例計算）、非作動時は主軸に全額。共通レース（結果確定・両者とも予想あり）のみが対象です。")
       st.caption("すべて過去データの集計で、将来の的中や回収を保証するものではありません。レース数が少ない組み合わせは数字が大きく振れます。")
+
+
+elif app_mode == "🗣 選手コメント傾向分析":
+  st.title("🗣 選手コメント傾向分析")
+  st.markdown(
+      "出走前に各選手へ付けられた**コメント**（player_stats に保存済み）と、実際の**着順・払戻金**を照合し、"
+      "「どんなコメントの選手が来やすいか」「その選手を軸に買い続けたら回収率はどうなるか」を集計します。"
+      "回収率は、その選手を軸にした **2車単 総流し** と **ワイド 総流し** を実際の払戻金で試算したものです。"
+  )
+  if comment_trends is None:
+    st.error("comment_trends モジュールが読み込めませんでした。デプロイに comment_trends.py が含まれているか確認してください。")
+  else:
+    df_players_ct, _, df_results_ct = load_replica_data()
+    if df_players_ct.empty:
+      st.warning("有効なデータが見つかりませんでした。")
+    else:
+      cov_ct = comment_trends.coverage(df_players_ct)
+      c_ct1, c_ct2, c_ct3 = st.columns(3)
+      c_ct1.metric("コメント付き選手データ", f"{cov_ct['コメントあり']:,} 件")
+      c_ct2.metric("コメント率", f"{cov_ct['コメント率%']} %")
+      c_ct3.metric("対象レース数", f"{cov_ct['レース数']:,} 件")
+      st.caption(f"収録レースID範囲: {cov_ct['最古レースID']} 〜 {cov_ct['最新レースID']}")
+
+      frame_ct = comment_trends.build_frame(df_players_ct, df_results_ct)
+      settled_ct = comment_trends.settled_only(frame_ct)
+      st.caption(f"結果と照合できたコメント: {len(settled_ct):,} 件（結果確定分のみで集計）")
+
+      if settled_ct.empty:
+        st.info("結果確定レースと照合できたコメントがまだありません。")
+      else:
+        min_n_ct = st.slider(
+            "集計の最低件数（これ未満の組み合わせは一覧に出しません）",
+            20, 300, 50, step=10, key="ct_min_n",
+        )
+
+        st.subheader("🏆 法則候補（コメント分類 × 条件）")
+        st.markdown(
+            "コメントの分類と条件（脚質・会場・車番帯・AI印・競走得点帯）の組み合わせから、"
+            "流し回収率が全体平均を **10ポイント以上** 上回った組み合わせだけを抽出しています。"
+        )
+        rules_ct = comment_trends.rule_candidates(settled_ct, min_samples=min_n_ct)
+        if rules_ct.empty:
+          st.info("条件に合う法則候補は見つかりませんでした（最低件数を下げると出てくる場合があります）。")
+        else:
+          show_df_responsive(rules_ct, "ct_rules")
+
+        st.subheader("💬 コメント原文フレーズ別の成績")
+        phrases_ct = comment_trends.phrase_stats(settled_ct, min_count=min_n_ct)
+        if phrases_ct.empty:
+          st.info("最低件数以上のフレーズがありませんでした。")
+        else:
+          show_df_responsive(phrases_ct, "ct_phrases")
+
+        st.subheader("🏷 コメント分類別の成績")
+        cats_ct = comment_trends.category_stats(settled_ct)
+        if not cats_ct.empty:
+          show_df_responsive(cats_ct, "ct_categories")
+
+        st.subheader("🔤 頻出ワード別の成績")
+        kw_ct = comment_trends.top_keywords(settled_ct, min_count=min_n_ct)
+        if kw_ct.empty:
+          st.info("最低件数以上の頻出ワードがありませんでした。")
+        else:
+          show_df_responsive(kw_ct, "ct_keywords")
+
+        st.subheader("🔍 コメント実例の検索")
+        keyword_ct = st.text_input("キーワード（コメントの一部 or 選手名は対象外）", key="ct_keyword")
+        if keyword_ct:
+          ex_ct = comment_trends.phrase_examples(frame_ct, keyword=keyword_ct, limit=100)
+          if ex_ct.empty:
+            st.info("該当するコメントはありませんでした。")
+          else:
+            st.caption(f"{len(ex_ct)} 件まで表示（着順が空欄のものは結果未確定）")
+            show_df_responsive(ex_ct, "ct_examples")
+
+      st.caption(
+          "注: ここで扱うのは出走前コメントのみです。出走後コメント（談話）は勝者中心にニュース等へ出る形式で、"
+          "全選手分がそろう保存先が現状ないため未収集です。数字は過去データの集計で、将来の的中や回収を保証しません。"
+          "件数が少ない組み合わせは数字が大きく振れるため、信頼度の表示とあわせて判断してください。"
+      )
 
 
 elif app_mode == "🧮 ミッドナイト買い目 回収率チェッカー":
