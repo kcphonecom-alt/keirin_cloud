@@ -42,26 +42,42 @@ CREATE TABLE IF NOT EXISTS player_post_comments (
 _STOP_MARKERS = ("レース情報", "投票シート", "投票ボックス", "着順・払戻金", "映像を観る")
 
 
+_FW_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
+
+
+def _is_info_line(line):
+    """選手情報行（所属・級班・年齢・期 / 決まり手）かどうか。"""
+    if re.search(r"\d+期", line) or "歳" in line:
+        return True
+    if len(line) == 1 and (line in "捲逃差追伸両先" or (line.isascii() and line.isalpha())):
+        # 決まり手（捲・逃など）や S / B 等の1文字マーク
+        return True
+    return False
+
+
 def parse_post_comments(raw_text, riders_by_car=None):
     """
     レース後コメント欄の innerText を
     [{"着順": int, "車": int|None, "選手名": str, "見出し": str, "コメント": str}]
     に変換する純粋関数。
 
+    実ページの構造（2026-11-08 に実物で確認）:
+        1着 / 車番 / 選手名 / 所属 級 年齢 期 / 決まり手 / (空行)
+        見出し（画面上の ―― は innerText には現れない） / (空行) / 本文段落…
+    コメントが無い選手のブロックは「レース後コメントはありません」のみで、
+    その選手は結果に含めない。
+
     riders_by_car: {車番: 選手名}（DBの player_stats 由来）。
-    渡されれば名前の照合で車番を確定する。無ければ着順ブロック内の
-    数字行から車番を推定する。
     """
     if not raw_text or "レース後コメント" not in raw_text:
         return []
     text = raw_text[raw_text.find("レース後コメント"):]
     lines = [l.strip() for l in text.split("\n")]
 
-    # 着順マーカー（"1着" のような行）でブロックに切る
     blocks = []  # (着順, [lines])
     current = None
     for line in lines:
-        m = re.match(r"^([1-9])着$", line)
+        m = re.match(r"^([1-9])着$", line.translate(_FW_DIGITS))
         if m:
             current = (int(m.group(1)), [])
             blocks.append(current)
@@ -71,47 +87,36 @@ def parse_post_comments(raw_text, riders_by_car=None):
 
     name_to_car = {}
     if riders_by_car:
-        name_to_car = {v: k for k, v in riders_by_car.items()}
+        name_to_car = {str(v): k for k, v in riders_by_car.items()}
 
     results = []
     for rank, blines in blocks:
+        if any("レース後コメントはありません" in l for l in blines):
+            continue
         name = ""
         car = None
-        headline = ""
-        body_lines = []
-        state = "head"  # head -> headline -> body
+        content = []  # 見出し＋本文の候補行（空行は除く）
         for line in blines:
-            if any(line.startswith(mk) for mk in _STOP_MARKERS) and state == "body":
+            if not line:
+                continue
+            if any(line.startswith(mk) for mk in _STOP_MARKERS) and content:
                 break
-            if state == "head":
-                if line in name_to_car:
-                    name = line
-                    car = name_to_car[line]
-                    state = "headline"
-                    continue
-                if re.match(r"^[1-9]$", line) and car is None:
-                    car = int(line)
-                    continue
-                if line.startswith("――") or line.startswith("——") or line.startswith("― "):
-                    headline = line.lstrip("―—- ").strip()
-                    state = "body"
-                    continue
-                # 名前らしい行（2〜6文字・数字や記号を含まない）を名前候補にする
-                if not name and 2 <= len(line) <= 6 and re.match(r"^[^\d\s]+$", line) \
-                        and line not in ("レース後コメント",):
-                    name = line
-                    state = "headline"
-                    continue
+            if line in name_to_car:
+                name = line
+                car = name_to_car[line]
                 continue
-            if state == "headline":
-                if line.startswith("――") or line.startswith("——") or line.startswith("― "):
-                    headline = line.lstrip("―—- ").strip()
-                    state = "body"
+            if re.match(r"^[1-9]$", line.translate(_FW_DIGITS)) and car is None and not content:
+                car = int(line.translate(_FW_DIGITS))
                 continue
-            body_lines.append(line)
-        body = "\n".join([l for l in body_lines if l]).strip()
-        if not body and not headline:
+            if _is_info_line(line) and not content:
+                continue
+            if line in ("映像を観る",) or re.match(r"^\d{4}/\d{2}/\d{2}.*更新$", line):
+                continue
+            content.append(line.lstrip("―—- ").strip())
+        if not content:
             continue
+        headline = content[0]
+        body = "\n".join(content[1:]).strip()
         results.append({
             "着順": rank,
             "車": car,
@@ -120,6 +125,27 @@ def parse_post_comments(raw_text, riders_by_car=None):
             "コメント": body,
         })
     return results
+
+
+async def fetch_interview_text(page, url):
+    """
+    レース後コメントページ専用の取得関数。
+    daily_update 側の取得関数には依存しない（Mac側コピーの版差で壊れた前例があるため）。
+    ?type=race_result_interview を開けばタブ切り替えなしで本文が表示される（実物で確認済み）。
+    """
+    try:
+        await page.goto(url, wait_until="networkidle", timeout=20000)
+    except Exception:
+        pass
+    try:
+        await page.wait_for_selector("text=レース後コメント", timeout=5000)
+    except Exception:
+        pass
+    try:
+        await page.wait_for_timeout(800)
+        return await page.evaluate("() => document.body.innerText")
+    except Exception:
+        return ""
 
 
 def race_url(venue_jp, base_date_str, day_num, r_num):
@@ -201,14 +227,16 @@ async def main():
             ),
         )
         page = await context.new_page()
-        for rid, venue, base_date, day_num, r_num in targets:
+        total_targets = len(targets)
+        empty_texts = 0
+        for idx, (rid, venue, base_date, day_num, r_num) in enumerate(targets, 1):
+            if idx % 50 == 1 or idx == total_targets:
+                print(f"   進捗 {idx}/{total_targets} レース目…（保存済み {saved_rows} 件）")
             try:
                 url = race_url(venue, base_date, day_num, r_num)
-                try:
-                    txt = await du.fetch_rendered_text(page, url, wait_text="レース後コメント")
-                except TypeError:
-                    # Mac側の daily_update.py が古く wait_text 引数が無い場合の互換処理
-                    txt = await du.fetch_rendered_text(page, url)
+                txt = await fetch_interview_text(page, url)
+                if not txt:
+                    empty_texts += 1
                 parsed = parse_post_comments(txt, riders.get(rid, {}))
                 if not parsed:
                     continue
@@ -231,6 +259,8 @@ async def main():
     cursor.close()
     conn.close()
     print(f"=== 完了（コメントあり {saved_races} レース / {saved_rows} 件を保存）===")
+    if empty_texts:
+        print(f"参考: ページテキストが空だったレースが {empty_texts} 件ありました")
 
 
 if __name__ == "__main__":
