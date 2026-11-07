@@ -369,6 +369,181 @@ def rule_candidates(df, min_samples=50, top_n=30):
             .head(top_n).drop(columns=["良さ"]).reset_index(drop=True))
 
 
+# ---------------------------------------------------------------- レース後コメント
+
+# レース後コメント（見出し＋本文）の分類ルール
+_POST_CATEGORY_RULES = [
+    ("好調・手応えあり", r"感覚|手応え|行ける|いける|良い感じ|いい感じ|自信|絶好調|仕上が"),
+    ("反省・課題あり", r"悪く|不甲斐ない|気持ちの面|届かず|反省|課題|情けない|申し訳|すみません"),
+    ("展開・作戦への言及", r"作戦|警戒|位置取り|位置を|展開|仕掛け|タイミング|ペース"),
+    ("体調・疲労への言及", r"疲れ|重い|体調|痛|怪我|ケガ|落車"),
+    ("感謝・喜び", r"応援|ありがとう|嬉しい|うれしい|良かった|よかった"),
+]
+
+POST_CATEGORIES = [name for name, _ in _POST_CATEGORY_RULES]
+
+
+def classify_post_comment(headline, body):
+    """レース後コメント（見出し＋本文）-> カテゴリ名のリスト（複数可）。"""
+    t = f"{headline or ''}\n{body or ''}"
+    if not t.strip():
+        return []
+    return [name for name, pat in _POST_CATEGORY_RULES if re.search(pat, t)]
+
+
+def _actual_date(race_id):
+    """レースID（開催初日_d日目）-> 実際のレース日 YYYYMMDD（文字列）。失敗時 None。"""
+    try:
+        parts = str(race_id).split("_")
+        base = parts[0]
+        day = int(re.sub(r"\D", "", parts[3])) if len(parts) >= 4 else 1
+        dt = pd.to_datetime(base, format="%Y%m%d") + pd.Timedelta(days=day - 1)
+        return dt.strftime("%Y%m%d")
+    except Exception:
+        return None
+
+
+def build_post_frame(df_post, df_players, df_results):
+    """
+    レース後コメント × その選手の「次走」成績を結んだ DataFrame を返す。
+
+    df_post: player_post_comments（レースID, 車, 選手名, 着順, 見出し, コメント）
+    次走 = 同じ選手名で、実際のレース日がこのレースより後の最速のレース。
+    次走の着順と払戻から、次走でその選手を軸に流した場合の試算も付ける。
+    """
+    cols = ["レースID", "開催日", "会場", "車", "選手名", "着順", "見出し", "コメント",
+            "カテゴリ", "次走レースID", "次走着順", "次走simA投資", "次走simA払戻",
+            "次走simB投資", "次走simB払戻", "次走あり"]
+    if df_post is None or df_post.empty:
+        return pd.DataFrame(columns=cols)
+    if df_players is None or df_players.empty or df_results is None or df_results.empty:
+        return pd.DataFrame(columns=cols)
+
+    # 選手ごとの全出走タイムライン（実際の日付順）
+    res_map = {}
+    for _, r in df_results.iterrows():
+        try:
+            c1 = int(r.get("1着車番")) if pd.notnull(r.get("1着車番")) else None
+            c2 = int(r.get("2着車番")) if pd.notnull(r.get("2着車番")) else None
+            c3 = int(r.get("3着車番")) if pd.notnull(r.get("3着車番")) else None
+        except Exception:
+            c1 = c2 = c3 = None
+        if c1 is None:
+            continue
+        res_map[str(r["レースID"])] = (c1, c2, c3, parse_payouts(r.get("払戻金JSON")))
+
+    car_counts = df_players.groupby("レースID")["車"].count().to_dict()
+    timeline = {}  # 選手名 -> [(実日, レースID, 車, 着順, simA投資, simA払戻, simB投資, simB払戻)]
+    for _, p in df_players.iterrows():
+        name = p.get("選手名")
+        rid = str(p.get("レースID"))
+        adate = _actual_date(rid)
+        if adate is None or name is None:
+            continue
+        try:
+            car = int(p.get("車"))
+        except Exception:
+            continue
+        finish = None
+        sa_i = sa_r = sb_i = sb_r = 0
+        res = res_map.get(rid)
+        n_cars = int(car_counts.get(p.get("レースID"), 0))
+        if res is not None and n_cars >= 2:
+            c1, c2, c3, payouts = res
+            finish = 1 if car == c1 else 2 if car == c2 else 3 if car == c3 else 0
+            opp = n_cars - 1
+            sa_i = sb_i = opp * 100
+            if finish == 1:
+                sa_r = payouts["2車単"].get((car, c2), 0)
+            if finish in (1, 2, 3):
+                for other in (c1, c2, c3):
+                    if other != car:
+                        sb_r += payouts["ワイド"].get(tuple(sorted((car, other))), 0)
+        timeline.setdefault(str(name), []).append(
+            (adate, rid, car, finish, sa_i, sa_r, sb_i, sb_r))
+    for name in timeline:
+        timeline[name].sort(key=lambda x: (x[0], x[1]))
+
+    records = []
+    for _, row in df_post.iterrows():
+        rid = str(row.get("レースID"))
+        parts = rid.split("_")
+        venue = parts[1] if len(parts) >= 2 else "-"
+        adate = _actual_date(rid)
+        name = str(row.get("選手名", ""))
+        nxt = None
+        for entry in timeline.get(name, []):
+            if adate is not None and entry[0] > adate:
+                nxt = entry
+                break
+        records.append({
+            "レースID": rid,
+            "開催日": adate or (parts[0] if parts else "-"),
+            "会場": venue,
+            "車": row.get("車"),
+            "選手名": name,
+            "着順": row.get("着順"),
+            "見出し": row.get("見出し", ""),
+            "コメント": row.get("コメント", ""),
+            "カテゴリ": classify_post_comment(row.get("見出し", ""), row.get("コメント", "")),
+            "次走レースID": nxt[1] if nxt else None,
+            "次走着順": nxt[3] if nxt else None,
+            "次走simA投資": nxt[4] if nxt else 0,
+            "次走simA払戻": nxt[5] if nxt else 0,
+            "次走simB投資": nxt[6] if nxt else 0,
+            "次走simB払戻": nxt[7] if nxt else 0,
+            "次走あり": nxt is not None and nxt[3] is not None,
+        })
+    return pd.DataFrame(records, columns=cols)
+
+
+def _agg_next(sub):
+    """次走成績の集計（_agg と同じ形で返す）。"""
+    sub = sub.drop(columns=["着順"], errors="ignore")
+    renamed = sub.rename(columns={
+        "次走着順": "着順", "次走simA投資": "simA投資", "次走simA払戻": "simA払戻",
+        "次走simB投資": "simB投資", "次走simB払戻": "simB払戻",
+    })
+    return _agg(renamed)
+
+
+def post_category_stats(df_post_frame):
+    """レース後コメントのカテゴリ別・次走成績。次走確定分のみを渡すこと。"""
+    if df_post_frame is None or df_post_frame.empty:
+        return pd.DataFrame()
+    rows = []
+    for cat in POST_CATEGORIES:
+        sub = df_post_frame[df_post_frame["カテゴリ"].apply(lambda cats: cat in cats)]
+        agg = _agg_next(sub) if len(sub) else None
+        if agg:
+            rows.append({"レース後コメント分類": cat, "信頼度": _reliability(len(sub)), **agg})
+    base = _agg_next(df_post_frame)
+    if base:
+        rows.append({"レース後コメント分類": "（全コメント平均）", "信頼度": "-", **base})
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).sort_values(
+        ["2車単流し回収率%"], ascending=False).reset_index(drop=True)
+
+
+def post_headline_stats(df_post_frame, min_count=5):
+    """見出しフレーズ別の次走成績。次走確定分のみを渡すこと。"""
+    if df_post_frame is None or df_post_frame.empty:
+        return pd.DataFrame()
+    rows = []
+    for head, sub in df_post_frame.groupby("見出し"):
+        if not head or len(sub) < min_count:
+            continue
+        agg = _agg_next(sub)
+        if agg:
+            rows.append({"見出し": head, "信頼度": _reliability(len(sub)), **agg})
+    if not rows:
+        return pd.DataFrame()
+    return (pd.DataFrame(rows)
+            .sort_values(["2車単流し回収率%", "件数"], ascending=[False, False])
+            .reset_index(drop=True))
+
+
 def phrase_examples(df, phrase=None, keyword=None, limit=100):
     """実例表示用：フレーズ完全一致 or キーワード部分一致の行を返す。"""
     if df is None or df.empty:
