@@ -128,7 +128,8 @@ st.markdown(
 )
 
 
-# --- 見た目カスタム: 背景（可愛いキャラのハンドル投げ）＋タイトルバーを半透明で可愛く ---
+# --- 見た目カスタム: タイトル部分にだけ、可愛いキャラのハンドル投げイラストをうっすら敷く ---
+# （メインの内容部分の背景は白紙のまま）
 import base64 as _b64
 
 _bg_path = os.path.join(
@@ -140,37 +141,27 @@ try:
   st.markdown(
       f"""
       <style>
-      .stApp {{
+      /* ページタイトル: イラストをうっすら背景にしたバー */
+      .main h1 {{
           background-image:
-              linear-gradient(rgba(255,255,255,0.58), rgba(255,255,255,0.85)),
+              linear-gradient(rgba(255,255,255,.80), rgba(255,255,255,.90)),
               url("data:image/jpeg;base64,{_bg_b64}");
           background-size: cover;
-          background-position: center top;
-          background-repeat: no-repeat;
-          background-attachment: fixed;
-      }}
-      /* ページのタイトルを、すりガラス風の半透明で可愛いバーに */
-      .main h1 {{
-          background: linear-gradient(135deg, rgba(255,255,255,.75), rgba(255,240,246,.65));
-          -webkit-backdrop-filter: blur(10px);
-          backdrop-filter: blur(10px);
-          border: 1px solid rgba(255,255,255,.85);
+          background-position: center 32%;
+          border: 1px solid rgba(0,0,0,.06);
           border-radius: 20px;
           padding: .5em .8em;
-          box-shadow: 0 8px 24px rgba(244,114,182,.18);
+          box-shadow: 0 6px 18px rgba(0,0,0,.06);
       }}
-      /* 左メニュー全体もほんのり半透明のパステルに */
-      [data-testid="stSidebar"] {{
-          background: rgba(255,248,251,.88);
-          -webkit-backdrop-filter: blur(10px);
-          backdrop-filter: blur(10px);
-      }}
-      [data-testid="stSidebar"] h1 {{
-          background: rgba(255,255,255,.7);
-          border: 1px solid rgba(255,255,255,.85);
-          border-radius: 16px;
-          padding: .35em .6em;
-          box-shadow: 0 6px 18px rgba(244,114,182,.15);
+      /* 左メニューのタイトルとカテゴリ見出しにも同じイラストをうっすら */
+      [data-testid="stSidebar"] h1,
+      [data-testid="stSidebar"] [data-testid="stExpander"] summary {{
+          background-image:
+              linear-gradient(rgba(255,255,255,.82), rgba(255,255,255,.92)),
+              url("data:image/jpeg;base64,{_bg_b64}");
+          background-size: cover;
+          background-position: center 32%;
+          border-radius: 14px;
       }}
       </style>
       """,
@@ -548,7 +539,7 @@ if st.sidebar.button("🔄 クラウドからデータを再同期"):
 
 NAV_CATEGORIES = [
     ("【今日】", [
-        "🎯 今日のおすすめ買い目と一撃",
+        "🎯 今日のおすすめ買い目と一撃の買い目",
     ]),
     ("【予想家の分析】", [
         "🔀 PRO×Kドリームス 織り交ぜ分析",
@@ -574,7 +565,7 @@ NAV_CATEGORIES = [
 ]
 
 if "app_mode" not in st.session_state:
-  st.session_state["app_mode"] = "🎯 今日のおすすめ買い目と一撃"
+  st.session_state["app_mode"] = "🎯 今日のおすすめ買い目と一撃の買い目"
 
 _current_mode = st.session_state["app_mode"]
 st.sidebar.caption("利用する機能を選択してください")
@@ -2125,12 +2116,12 @@ elif app_mode == "🗣 選手コメント傾向分析":
       )
 
 
-elif app_mode == "🎯 今日のおすすめ買い目と一撃":
-  st.title("🎯 今日のおすすめ買い目と一撃")
+elif app_mode == "🎯 今日のおすすめ買い目と一撃の買い目":
+  st.title("🎯 今日のおすすめ買い目と一撃の買い目")
   st.markdown(
       "その日のレースから、**根拠がそろった本命のおすすめ**と**穴目の一撃**を並べるページです。"
       "おすすめは「ふるだびの支持 ＋ Kドリームス記者の◎と軸が一致 ＋ モデルの推定回収率100%以上」を基本に、"
-      "一撃は「記者の◎とズレた高配当の穴目」を条件に選んでいます。"
+      "一撃は「PRO予想家てんぐりの買い目を軸に、Kドリームス記者の◎が後押しするものを優先した高配当狙い」を条件に選んでいます。"
       "PRO予想や記者の印が新しく入るたびに内容は変わります。過去の日付を選ぶと、その日のおすすめと実際の結果がそのまま残っています。"
   )
   if today_picks is None or ev_v2 is None:
@@ -2225,14 +2216,30 @@ elif app_mode == "🎯 今日のおすすめ買い目と一撃":
           rows.append(row)
         return pd.DataFrame(rows)
 
+      def _bet_cards_tp(pick_list, color):
+        # 買い目を大きな太字で表示する（スマホで開いてすぐ目で判別できるように）
+        for p in pick_list:
+          race_no = p["レースID"].split("_")[2]
+          st.markdown(
+              f'''
+              <div style="border:2px solid {color};border-radius:16px;padding:10px 16px;margin:8px 0;background:#fff;">
+                <div style="font-size:1rem;color:#444;">{p['会場']} {race_no} ・ {p['発走時間']}発走 ・ {p['券種']}</div>
+                <div style="font-size:2.6rem;font-weight:900;letter-spacing:.04em;line-height:1.2;color:{color};">{p['買い目']}</div>
+              </div>
+              ''',
+              unsafe_allow_html=True,
+          )
+
       st.subheader("📌 おすすめ（本命）")
       if picks_tp["おすすめ"]:
+        _bet_cards_tp(picks_tp["おすすめ"], "#0f766e")
         show_df_responsive(_pick_rows_tp(picks_tp["おすすめ"], "おすすめ", 500), "tp_main")
       else:
         st.info("この日は、根拠のそろったおすすめがありませんでした（条件に合わない日は無理に出しません）。")
 
-      st.subheader("💥 一撃（穴目）")
+      st.subheader("💥 一撃（高配当狙い）")
       if picks_tp["一撃"]:
+        _bet_cards_tp(picks_tp["一撃"], "#dc2626")
         show_df_responsive(_pick_rows_tp(picks_tp["一撃"], "一撃", 200), "tp_hit")
       else:
         st.info("この日は、一撃の条件に合う穴目がありませんでした。")
