@@ -2117,13 +2117,49 @@ elif app_mode == "🗣 選手コメント傾向分析":
 
 
 elif app_mode == "🎯 今日のおすすめ買い目":
-  st.title("🎯 今日のおすすめ買い目")
-  st.markdown(
-      "その日のレースから、**根拠がそろったおすすめ**を並べるページです。"
-      "おすすめ（本命）は「ふるだびの支持 ＋ Kドリームス記者の◎と軸が一致 ＋ モデルの推定回収率100%以上」、"
-      "おすすめは「PRO予想家の支持があり、推定回収率100%以上で見込みの高い買い目」を条件に選んでいます。"
-      "PRO予想や記者の印が新しく入るたびに内容は変わります。過去の日付を選ぶと、その日のおすすめと実際の結果がそのまま残っています。"
-  )
+  # 見出しの帯: 左に文字、右に可愛いキャラのレース絵。文字には被らないよう、
+  # 左側は白を濃く残し、右へ行くほど絵を見せる。スマホでは文字の下に絵をのぞかせる。
+  _hero_bg_tp = _bg_b64 if "_bg_b64" in globals() else ""
+  _hero_html_tp = """
+      <style>
+      .tp-hero {
+          position: relative;
+          border: 1px solid rgba(0,0,0,.06);
+          border-radius: 20px;
+          box-shadow: 0 6px 18px rgba(0,0,0,.06);
+          padding: 26px 30px;
+          margin: 2px 0 14px;
+          overflow: hidden;
+          background-image:
+              linear-gradient(90deg, rgba(255,255,255,.98) 0%, rgba(255,255,255,.95) 42%, rgba(255,255,255,.45) 74%, rgba(255,255,255,.22) 100%),
+              url("data:image/jpeg;base64,%%BG%%");
+          background-size: cover;
+          background-position: right center;
+      }
+      .tp-hero-inner { max-width: 58%; }
+      .tp-hero-title { font-size: 2.45rem; font-weight: 800; line-height: 1.25; color: #1f2937; }
+      .tp-hero-text { margin: 12px 0 0; font-size: 1.02rem; line-height: 1.8; color: #374151; }
+      @media (max-width: 768px) {
+          .tp-hero {
+              padding: 18px 16px 120px;
+              background-image:
+                  linear-gradient(180deg, rgba(255,255,255,.97) 52%, rgba(255,255,255,.45) 88%, rgba(255,255,255,.25) 100%),
+                  url("data:image/jpeg;base64,%%BG%%");
+              background-position: center 82%;
+          }
+          .tp-hero-inner { max-width: 100%; }
+          .tp-hero-title { font-size: 1.65rem; }
+          .tp-hero-text { font-size: .95rem; line-height: 1.7; }
+      }
+      </style>
+      <div class="tp-hero">
+        <div class="tp-hero-inner">
+          <div class="tp-hero-title">🎯 今日のおすすめ買い目</div>
+          <p class="tp-hero-text">その日のレースから、<b>根拠がそろったおすすめ</b>を並べるページです。おすすめ（本命）は「ふるだびの支持 ＋ Kドリームス記者の◎と軸が一致 ＋ モデルの推定回収率100%以上」、おすすめは「PRO予想家の支持があり、推定回収率100%以上で見込みの高い買い目」を条件に選んでいます。PRO予想や記者の印が新しく入るたびに内容は変わります。過去の日付を選ぶと、その日のおすすめと実際の結果がそのまま残っています。</p>
+        </div>
+      </div>
+      """.replace("%%BG%%", _hero_bg_tp)
+  st.markdown(_hero_html_tp, unsafe_allow_html=True)
   if today_picks is None or ev_v2 is None:
     st.error("today_picks / ev_v2 モジュールが読み込めませんでした。デプロイに today_picks.py と ev_v2.py が含まれているか確認してください。")
   else:
