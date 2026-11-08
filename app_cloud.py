@@ -42,6 +42,16 @@ try:
 except Exception:
   comment_trends = None
 
+try:
+  import kdreams_mix
+
+  if not hasattr(kdreams_mix, "agreement_stats"):
+    import importlib
+
+    kdreams_mix = importlib.reload(kdreams_mix)
+except Exception:
+  kdreams_mix = None
+
 # psycopg2 の安全なインポート
 try:
   import psycopg2
@@ -217,6 +227,19 @@ def load_replica_data():
     return df_players, df_memos, df_results
   except Exception:
     return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_kd_marks():
+  try:
+    conn = get_db_connection()
+    df_kd = pd.read_sql(
+        "SELECT race_id, venue, reporter, honmei, taikou FROM kdreams_marks", conn
+    )
+    conn.close()
+    return df_kd
+  except Exception:
+    return pd.DataFrame()
 
 
 def init_db():
@@ -502,6 +525,7 @@ app_mode = st.sidebar.radio(
         "🧪 EVバックテスト（実力測定）",
         "📊 PRO傾向＆会場別 勝ち筋分析",
         "🗣 選手コメント傾向分析",
+        "🔀 PRO×Kドリームス 織り交ぜ分析",
         "🚧工事中｜📈 PRO予想家別 回収率アナリティクス (全券種分解)",
         "🚧工事中｜👤 PRO予想家 深掘り個別アナリティクス",
         "🚧工事中｜PRO予想 1×2列目MIX分析",
@@ -2031,6 +2055,66 @@ elif app_mode == "🗣 選手コメント傾向分析":
           "数字は過去データの集計で、将来の的中や回収を保証しません。"
           "件数が少ない組み合わせは数字が大きく振れるため、信頼度の表示とあわせて判断してください。"
       )
+
+
+elif app_mode == "🔀 PRO×Kドリームス 織り交ぜ分析":
+  st.title("🔀 PRO×Kドリームス 織り交ぜ分析")
+  st.markdown(
+      "楽天Kドリームスの記者予想（◎本命）とWINTICKETのPRO予想を突き合わせ、"
+      "**「PROの軸と記者の◎が一致したレースだけに絞ると、PRO買い目の回収率はどう変わるか」** を集計します。"
+      "記者の◎単独では回収率70%前後（2024年11月〜2026年10月の54,780レースで検証）ですが、"
+      "◎の1着率は46%あり「そのレースのエースを当てる指標」としては本物です。"
+      "買い目を合成するのではなく、**レース選別の確認役**として使えるかを見るページです。"
+  )
+  if kdreams_mix is None:
+    st.error("kdreams_mix モジュールが読み込めませんでした。デプロイに kdreams_mix.py が含まれているか確認してください。")
+  else:
+    df_kd_mix = load_kd_marks()
+    if df_kd_mix.empty:
+      st.warning(
+          "Kドリームスの印データ（kdreams_marks テーブル）がまだ入っていません。"
+          "Macの ~/keirin_v3 で kdreams_load_db.py を実行すると、このページが使えるようになります。"
+      )
+    else:
+      st.caption(f"Kドリームス印データ: {len(df_kd_mix):,} レース分を収録")
+      df_parsed_mix = get_parsed_df()
+      if df_parsed_mix.empty:
+        st.warning("PRO予想データが見つかりませんでした。")
+      else:
+        merged_mix = kdreams_mix.merge_frames(df_parsed_mix, df_kd_mix)
+        if merged_mix.empty:
+          st.info("PRO予想とKドリームス印の両方がある結果確定レースがまだありません。")
+        else:
+          fs_mix = kdreams_mix.kd_form_stats(merged_mix)
+          mc1, mc2, mc3, mc4 = st.columns(4)
+          mc1.metric("共通レース数", f"{fs_mix['共通レース数']:,}")
+          mc2.metric("記者の◎ 1着率", f"{fs_mix['◎1着率%']} %")
+          mc3.metric("記者の◎ 3連対率", f"{fs_mix['◎3連対率%']} %")
+          mc4.metric("PRO軸との一致率", f"{fs_mix['PRO軸との一致率%']} %")
+          st.caption("共通レース = PRO予想とKドリームス印の両方あり・結果確定のレース。回収率はPRO買い目の実払戻ベースです。")
+
+          st.subheader("🎯 軸の一致／不一致で分けたPRO買い目の成績")
+          st.markdown(
+              "「軸が◎と一致」の回収率が「軸が◎と不一致」や「全レース」を安定して上回るなら、"
+              "記者の◎はPRO予想の絞り込みに使えます。逆なら確認役にもならない、という判断材料です。"
+          )
+          ag_mix = kdreams_mix.agreement_stats(merged_mix)
+          if ag_mix.empty:
+            st.info("集計できるデータがありませんでした。")
+          else:
+            show_df_responsive(ag_mix, "kd_mix_agreement")
+
+          st.subheader("🖊 記者別の◎と、一致時のPRO成績")
+          rs_mix = kdreams_mix.reporter_stats(merged_mix)
+          if rs_mix.empty:
+            st.info("共通レース50件以上の記者はいませんでした。")
+          else:
+            show_df_responsive(rs_mix, "kd_mix_reporter")
+
+          st.caption(
+              "注: 数字は過去データの集計で、将来の的中や回収を保証しません。"
+              "一致レースだけを買う運用にするかは、レース数（サンプル量）と回収率の差を見て判断してください。"
+          )
 
 
 elif app_mode == "🧮 ミッドナイト買い目 回収率チェッカー":
