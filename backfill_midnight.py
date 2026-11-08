@@ -23,11 +23,13 @@ import daily_update as du
 _ID_RE = re.compile(r"(\d{4})(\d{2})(\d{2})_(.+?)_(\d+)R_d(\d+)")
 
 
-def find_targets(records, from_date, to_date, limit_days):
+def find_targets(records, from_date, to_date, limit_days, checked=None):
     """race_results のレコードから、ミッドナイト開催の不足している開催日を洗い出す。
 
     不足の定義: その開催の最大日レース数（最低7）未満しか結果が無い日、
     または丸ごと欠けている日（1〜3日目）。古い開催から順に返す。
+    checked（backfill_checked_days の (base_code, 日次) 集合）に含まれる日は、
+    走査済み＝それ以上結果が存在しない日として対象から外す。
     戻り値: (targets, total) targets は (会場, 初日コード, 日次) のリスト。
     """
     meetings = {}
@@ -53,14 +55,64 @@ def find_targets(records, from_date, to_date, limit_days):
             continue
         card = max([len(v) for v in days.values()] + [7])
         base_code = base + du.STADIUM_MASTER[venue]["code"]
-        for dnum in (1, 2, 3):
+        day_nums = [1, 2, 3] + ([4] if 4 in days else [])
+        for dnum in day_nums:
+            if checked and (base_code, dnum) in checked:
+                continue
             if len(days.get(dnum, [])) < card:
                 found.append((base_date, venue, base_code, dnum))
-        if 4 in days and len(days[4]) < card:
-            found.append((base_date, venue, base_code, 4))
     found.sort()
     total = len(found)
     return [(venue, base_code, dnum) for (_, venue, base_code, dnum) in found[:limit_days]], total
+
+
+def load_checked_days(cur, conn):
+    """走査済み開催日テーブルを用意し、(base_code, 日次) の集合を返す。"""
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS backfill_checked_days (
+            base_code TEXT NOT NULL,
+            day INT NOT NULL,
+            saved INT,
+            checked_at TIMESTAMPTZ DEFAULT now(),
+            PRIMARY KEY (base_code, day)
+        )
+        """
+    )
+    conn.commit()
+    cur.execute("SELECT base_code, day FROM backfill_checked_days")
+    return {(r[0], int(r[1])) for r in cur.fetchall()}
+
+
+def should_mark_checked(detail, base_code, today=None):
+    """その開催日を「走査済み（これ以上結果は無い）」として記録してよいか。
+
+    条件: 最終レースまで走査し切り、1レース以上を処理し終えていて、
+    開催初日が7日以上前（結果が後から確定する余地をなくすための余裕）。
+    日数が他の日より少ない開催日や、中止で結果が存在しないレースを含む日は、
+    この記録によって次回以降の対象から外れ、補完が完了できるようになる。
+    """
+    if not detail.get("reached_end") or detail.get("processed", 0) < 1:
+        return False
+    try:
+        base_date = date(int(base_code[:4]), int(base_code[4:6]), int(base_code[6:8]))
+    except Exception:
+        return False
+    today = today or date.today()
+    return (today - base_date).days >= 7
+
+
+def mark_checked_day(cur, conn, base_code, dnum, saved):
+    cur.execute(
+        """
+        INSERT INTO backfill_checked_days (base_code, day, saved)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (base_code, day)
+        DO UPDATE SET saved = EXCLUDED.saved, checked_at = now()
+        """,
+        (base_code, dnum, saved),
+    )
+    conn.commit()
 
 
 async def main():
@@ -72,9 +124,12 @@ async def main():
 
     conn = du.get_db_connection()
     cur = conn.cursor()
+    checked = load_checked_days(cur, conn)
+    if checked:
+        print(f"走査済みとして対象外の開催日: {len(checked)} 件")
     cur.execute('SELECT "レースID", "発走時間" FROM race_results')
     records = [{"レースID": r[0], "発走時間": r[1]} for r in cur.fetchall()]
-    targets, total = find_targets(records, from_date, to_date, limit_days)
+    targets, total = find_targets(records, from_date, to_date, limit_days, checked=checked)
     print(f"対象期間 {from_date} 〜 {to_date}: 不足している開催日は全 {total} 件、今回は {len(targets)} 件を処理します")
     for venue, base_code, dnum in targets[:10]:
         print(f"  例: {venue} base={base_code} day={dnum}")
@@ -106,8 +161,15 @@ async def main():
             if (time.time() - started) / 60 > max_minutes:
                 print(f"時間上限 ({max_minutes}分) に達したため終了します。残りは次回の実行で続きます")
                 break
-            total_saved += await bf.process_meeting(page, cur, conn, venue, base_code, dnum, skip_predictions=True)
+            saved_day, detail = await bf.process_meeting(
+                page, cur, conn, venue, base_code, dnum,
+                skip_predictions=True, return_detail=True,
+            )
+            total_saved += saved_day
             done_days += 1
+            if should_mark_checked(detail, base_code):
+                mark_checked_day(cur, conn, base_code, dnum, saved_day)
+                print(f"  → {venue} day{dnum} は走査済みとして記録（次回から対象外）")
         await browser.close()
     cur.close()
     conn.close()

@@ -35,13 +35,19 @@ async def fetch_pred_text(page, url):
         return await du.fetch_rendered_text(page, url)
 
 
-async def process_meeting(page, cur, conn, venue_jp, base, day, max_r=12, skip_predictions=False):
-    """1開催日分（会場×日次）の出走表・予想・結果を取り直す。保存できた結果レース数を返す。"""
+async def process_meeting(page, cur, conn, venue_jp, base, day, max_r=12, skip_predictions=False, return_detail=False):
+    """1開催日分（会場×日次）の出走表・予想・結果を取り直す。保存できた結果レース数を返す。
+
+    return_detail=True のときは (保存数, {"processed": 処理を終えたレース数,
+    "reached_end": その日の最終レースまで走査し切ったか}) を返す。
+    """
     info = du.STADIUM_MASTER[venue_jp]
     en, code = info["en"], info["code"]
     base_date = base[:8]
     print(f"== {venue_jp} (base={base}, day={day}) ==")
     saved_results = 0
+    processed = 0
+    reached_end = False
     for r in range(1, max_r + 1):
         race_id = f"{base_date}_{venue_jp}_{r}R_d{day}"
         old_id = f"{base_date}{code}_{en}_{r}R_d{day}"
@@ -51,6 +57,7 @@ async def process_meeting(page, cur, conn, venue_jp, base, day, max_r=12, skip_p
             )
             if not du.is_valid_race_page(card, venue_jp):
                 print(f"  {r}R: 出走表が取れない → この会場はここまで")
+                reached_end = True
                 break
             start_time = du.extract_start_time(card)
 
@@ -131,9 +138,14 @@ async def process_meeting(page, cur, conn, venue_jp, base, day, max_r=12, skip_p
             conn.commit()
             res_flag = "有" if res_data else "未確定/無"
             print(f"  {r}R: [完了] 出走:{len(players)}人, 予想:{len(preds)}件, 結果:{res_flag} ✓")
+            processed += 1
         except Exception as e:
             conn.rollback()
             print(f"  {r}R: エラー: {e}")
+    else:
+        reached_end = True
+    if return_detail:
+        return saved_results, {"processed": processed, "reached_end": reached_end}
     return saved_results
 
 
