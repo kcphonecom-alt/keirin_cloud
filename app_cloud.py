@@ -128,35 +128,6 @@ st.markdown(
 )
 
 
-# --- 背景: ハンドル投げ画像を半透明で敷く（白グラデーションで薄く重ねる） ---
-import base64 as _b64
-
-_bg_path = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "assets", "handle_throw_bg.jpg"
-)
-try:
-  with open(_bg_path, "rb") as _f:
-    _bg_b64 = _b64.b64encode(_f.read()).decode()
-  st.markdown(
-      f"""
-      <style>
-      .stApp {{
-          background-image:
-              linear-gradient(rgba(255,255,255,0.84), rgba(255,255,255,0.93)),
-              url("data:image/jpeg;base64,{_bg_b64}");
-          background-size: cover;
-          background-position: center top;
-          background-repeat: no-repeat;
-          background-attachment: fixed;
-      }}
-      </style>
-      """,
-      unsafe_allow_html=True,
-  )
-except Exception:
-  pass
-
-
 import html as _html_mod
 
 
