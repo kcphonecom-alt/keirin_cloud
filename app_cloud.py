@@ -52,6 +52,16 @@ try:
 except Exception:
   kdreams_mix = None
 
+try:
+  import today_picks
+
+  if not hasattr(today_picks, "select_picks"):
+    import importlib
+
+    today_picks = importlib.reload(today_picks)
+except Exception:
+  today_picks = None
+
 # psycopg2 の安全なインポート
 try:
   import psycopg2
@@ -513,24 +523,46 @@ if st.sidebar.button("🔄 クラウドからデータを再同期"):
   st.success("✅ キャッシュをクリアしました！")
   st.rerun()
 
-app_mode = st.sidebar.radio(
-    "利用する機能を選択してください",
-    [
+NAV_CATEGORIES = [
+    ("【今日】", [
+        "🎯 今日のおすすめ買い目と一撃",
+    ]),
+    ("【予想家の分析】", [
+        "🔀 PRO×Kドリームス 織り交ぜ分析",
+        "📊 PRO傾向＆会場別 勝ち筋分析",
+    ]),
+    ("【ミッドナイト】", [
         "🧮 ミッドナイト買い目 回収率チェッカー",
         "🎁 ミッドナイト特選 123BOX決着リスト",
         "🌙 ミッドナイト高回収率 ＆ PRO予想融合シミュレータ",
         "🤖 ミッドナイトAI自動探索 (黄金比率の発見)",
-        "🚧工事中｜🎯 買い目別 EVランキング",
+    ]),
+    ("【買い目さがしと検証】", [
         "🎯 確率で見つける お得な買い目",
         "🧪 過去のレースで実力テスト",
-        "📊 PRO傾向＆会場別 勝ち筋分析",
         "🗣 選手コメント傾向分析",
-        "🔀 PRO×Kドリームス 織り交ぜ分析",
-        "🚧工事中｜📈 PRO予想家別 回収率アナリティクス (全券種分解)",
-        "🚧工事中｜👤 PRO予想家 深掘り個別アナリティクス",
-        "🚧工事中｜PRO予想 1×2列目MIX分析",
-    ],
-)
+    ]),
+    ("【工事中】", [
+        "工事中｜🎯 買い目別 EVランキング",
+        "工事中｜📈 PRO予想家別 回収率アナリティクス (全券種分解)",
+        "工事中｜👤 PRO予想家 深掘り個別アナリティクス",
+        "工事中｜PRO予想 1×2列目MIX分析",
+    ]),
+]
+
+if "app_mode" not in st.session_state:
+  st.session_state["app_mode"] = "🎯 今日のおすすめ買い目と一撃"
+
+_current_mode = st.session_state["app_mode"]
+st.sidebar.caption("利用する機能を選択してください")
+for _cat_name, _cat_items in NAV_CATEGORIES:
+  with st.sidebar.expander(_cat_name, expanded=_current_mode in _cat_items):
+    for _nav_label in _cat_items:
+      if st.button(_nav_label, key=f"nav_{_nav_label}", use_container_width=True):
+        st.session_state["app_mode"] = _nav_label
+        st.rerun()
+
+app_mode = st.session_state["app_mode"]
 
 
 # 共通データ前処理
@@ -641,7 +673,7 @@ def get_parsed_df():
 # ==========================================
 # 1. PRO予想家別 回収率アナリティクス
 # ==========================================
-if app_mode == "🚧工事中｜📈 PRO予想家別 回収率アナリティクス (全券種分解)":
+if app_mode == "工事中｜📈 PRO予想家別 回収率アナリティクス (全券種分解)":
   st.title("📈 PRO予想家別 スプレッドシート風個別買い目詳細アナリティクス")
   df_parsed = get_parsed_df()
 
@@ -763,7 +795,7 @@ if app_mode == "🚧工事中｜📈 PRO予想家別 回収率アナリティク
 # ==========================================
 # 2. PRO予想家 深掘り個別アナリティクス
 # ==========================================
-elif app_mode == "🚧工事中｜👤 PRO予想家 深掘り個別アナリティクス":
+elif app_mode == "工事中｜👤 PRO予想家 深掘り個別アナリティクス":
   st.title("👤 PRO予想家 深掘り個別アナリティクスルーム")
   st.markdown(
       "特定の予想家を一人ピックアップし、その予想家のパフォーマンスを徹底的に分析します。"
@@ -1356,7 +1388,7 @@ elif app_mode == "🤖 ミッドナイトAI自動探索 (黄金比率の発見)"
 # ==========================================
 # 5. PRO予想 1×2列目MIX分析 (完全リニューアル版)
 # ==========================================
-elif app_mode == "🚧工事中｜PRO予想 1×2列目MIX分析":
+elif app_mode == "工事中｜PRO予想 1×2列目MIX分析":
   st.title("🎯 PRO予想 1列目×2列目 MIX回収率検証 & 勝ち筋発掘")
   st.markdown(
       "PRO予想の **「1列目（軸・1着候補）」** と **「2列目・3列目（対抗・相手候補）」**"
@@ -1481,7 +1513,7 @@ elif app_mode == "🚧工事中｜PRO予想 1×2列目MIX分析":
 # ==========================================
 # 6. 買い目別 EVランキング
 # ==========================================
-elif app_mode == "🚧工事中｜🎯 買い目別 EVランキング":
+elif app_mode == "工事中｜🎯 買い目別 EVランキング":
   st.title("🎯 買い目別 EVランキング")
   st.markdown(
       "過去の全PRO予想から **「その買い目そのもの」の実績**（組み合わせ別・予想家×組み合わせ・"
@@ -2054,6 +2086,124 @@ elif app_mode == "🗣 選手コメント傾向分析":
           "注: レース後コメントはWINTICKETに掲載されるS級の一部レースのみが対象で、全レース分はそろいません。"
           "数字は過去データの集計で、将来の的中や回収を保証しません。"
           "件数が少ない組み合わせは数字が大きく振れるため、信頼度の表示とあわせて判断してください。"
+      )
+
+
+elif app_mode == "🎯 今日のおすすめ買い目と一撃":
+  st.title("🎯 今日のおすすめ買い目と一撃")
+  st.markdown(
+      "その日のレースから、**根拠がそろった本命のおすすめ**と**穴目の一撃**を並べるページです。"
+      "おすすめは「ふるだびの支持 ＋ Kドリームス記者の◎と軸が一致 ＋ モデルの推定回収率100%以上」を基本に、"
+      "一撃は「記者の◎とズレた高配当の穴目」を条件に選んでいます。"
+      "PRO予想や記者の印が新しく入るたびに内容は変わります。過去の日付を選ぶと、その日のおすすめと実際の結果がそのまま残っています。"
+  )
+  if today_picks is None or ev_v2 is None:
+    st.error("today_picks / ev_v2 モジュールが読み込めませんでした。デプロイに today_picks.py と ev_v2.py が含まれているか確認してください。")
+  else:
+    from zoneinfo import ZoneInfo as _ZI_tp
+
+    _now_tp = datetime.now(_ZI_tp("Asia/Tokyo"))
+    target_tp = st.date_input("日付（過去の日も選べます）", value=_now_tp.date(), key="tp_date")
+    target_str_tp = target_tp.strftime("%Y%m%d")
+    is_past_tp = target_str_tp < _now_tp.strftime("%Y%m%d")
+    df_players_tp, df_memos_tp, df_results_tp = load_replica_data()
+    df_kd_tp = load_kd_marks()
+    if df_memos_tp.empty or df_results_tp.empty:
+      st.warning("有効なデータが見つかりませんでした。")
+    else:
+      memos_tp, results_tp = ev_engine.frames_to_inputs(df_memos_tp, df_results_tp)
+      stats_results_tp = {
+          rid: r for rid, r in results_tp.items()
+          if (today_picks.actual_date_of(rid) or "99999999") < target_str_tp
+      }
+      stats_tp = ev_v2.build_history_v2(memos_tp, stats_results_tp)
+      scoring_results_tp = {
+          rid: r for rid, r in results_tp.items()
+          if today_picks.actual_date_of(rid) != target_str_tp
+      }
+      players_tp = ev_v2.frames_to_players(df_players_tp)
+      ranked_tp = ev_v2.score_upcoming_v2(
+          memos_tp,
+          scoring_results_tp,
+          players_tp,
+          stats_tp,
+          midnight_only=False,
+          bet_types=["2車単", "ワイド"],
+          from_date=target_str_tp,
+          require_pro=True,
+      )
+      if not ranked_tp.empty:
+        ranked_tp = ranked_tp[
+            ranked_tp["レースID"].apply(
+                lambda rid: today_picks.actual_date_of(rid) == target_str_tp
+            )
+        ]
+      kd_map_tp = {}
+      if not df_kd_tp.empty:
+        kd_map_tp = {
+            r["race_id"]: r["honmei"]
+            for _, r in df_kd_tp.iterrows()
+            if pd.notnull(r["honmei"])
+        }
+      picks_tp = today_picks.select_picks(ranked_tp, kd_map_tp)
+
+      pro_races_tp = 0
+      if not ranked_tp.empty:
+        pro_races_tp = ranked_tp["レースID"].nunique()
+      st.caption(
+          f"表示時刻: {_now_tp.strftime('%Y-%m-%d %H:%M')}（日本時間）。"
+          "このページは開くたびに、DBに入っている最新のPRO予想・選手データ・記者の印から作り直しています。"
+          f"（この日のPRO予想つき候補レース: {pro_races_tp} 件）"
+      )
+
+      res_map_tp = {}
+      if is_past_tp:
+        for _, r in df_results_tp.iterrows():
+          res_map_tp[str(r["レースID"])] = r
+
+      def _pick_rows_tp(pick_list, kind, amount):
+        rows = []
+        for p in pick_list:
+          row = {
+              "会場": p["会場"],
+              "レース": p["レースID"].split("_")[2],
+              "発走": p["発走時間"],
+              "券種": p["券種"],
+              "買い目": p["買い目"],
+              "金額目安": f"{amount}円",
+              "根拠": today_picks.reason_text(p, kind),
+          }
+          if is_past_tp:
+            rec = res_map_tp.get(p["レースID"])
+            if rec is not None and pd.notnull(rec.get("1着車番")):
+              row["結果"] = (
+                  f"{int(rec['1着車番'])}-{int(rec['2着車番'])}-{int(rec['3着車番'])}"
+              )
+              pay = today_picks.payout_for(
+                  rec.get("払戻金JSON"), p["券種"], p["買い目"]
+              )
+              row["払戻（100円あたり）"] = f"{pay:,}円" if pay else "外れ"
+            else:
+              row["結果"] = "未確定"
+              row["払戻（100円あたり）"] = "-"
+          rows.append(row)
+        return pd.DataFrame(rows)
+
+      st.subheader("📌 おすすめ（本命）")
+      if picks_tp["おすすめ"]:
+        show_df_responsive(_pick_rows_tp(picks_tp["おすすめ"], "おすすめ", 500), "tp_main")
+      else:
+        st.info("この日は、根拠のそろったおすすめがありませんでした（条件に合わない日は無理に出しません）。")
+
+      st.subheader("💥 一撃（穴目）")
+      if picks_tp["一撃"]:
+        show_df_responsive(_pick_rows_tp(picks_tp["一撃"], "一撃", 200), "tp_hit")
+      else:
+        st.info("この日は、一撃の条件に合う穴目がありませんでした。")
+
+      st.caption(
+          "注: 推定回収率は確率モデルによる目安で、実際のオッズとは別物です。買う前に必ず実際のオッズを確認してください。"
+          "過去の日の表示は、残っているデータから当時の条件で再計算したもので、履歴として残り続けます。"
       )
 
 
