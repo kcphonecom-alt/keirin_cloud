@@ -2139,17 +2139,17 @@ elif app_mode == "🎯 今日のおすすめ買い目":
       .tp-hero-inner { max-width: 58%; }
       .tp-hero-title { font-size: 2.45rem; font-weight: 800; line-height: 1.25; color: #1f2937; }
       .tp-hero-text { margin: 12px 0 0; font-size: 1.02rem; line-height: 1.8; color: #374151; }
+      .tp-hero-img { display: none; }
       @media (max-width: 768px) {
+          /* スマホでは背景の拡大表示をやめ、絵は切らずに文字の下へ全体を置く */
           .tp-hero {
-              padding: 18px 16px 120px;
-              background-image:
-                  linear-gradient(180deg, rgba(255,255,255,.97) 52%, rgba(255,255,255,.45) 88%, rgba(255,255,255,.25) 100%),
-                  url("data:image/jpeg;base64,%%BG%%");
-              background-position: center 82%;
+              padding: 18px 16px;
+              background-image: linear-gradient(180deg, rgba(255,255,255,.99), rgba(255,255,255,.96));
           }
           .tp-hero-inner { max-width: 100%; }
           .tp-hero-title { font-size: 1.65rem; }
           .tp-hero-text { font-size: .95rem; line-height: 1.7; }
+          .tp-hero-img { display: block; width: 100%; height: auto; border-radius: 14px; margin-top: 14px; }
       }
       </style>
       <div class="tp-hero">
@@ -2157,6 +2157,7 @@ elif app_mode == "🎯 今日のおすすめ買い目":
           <div class="tp-hero-title">🎯 今日のおすすめ買い目</div>
           <p class="tp-hero-text">その日のレースから、<b>根拠がそろったおすすめ</b>を並べるページです。おすすめ（本命）は「ふるだびの支持 ＋ Kドリームス記者の◎と軸が一致 ＋ モデルの推定回収率100%以上」、おすすめは「PRO予想家の支持があり、推定回収率100%以上で見込みの高い買い目」を条件に選んでいます。PRO予想や記者の印が新しく入るたびに内容は変わります。過去の日付を選ぶと、その日のおすすめと実際の結果がそのまま残っています。</p>
         </div>
+        <img class="tp-hero-img" src="data:image/jpeg;base64,%%BG%%" alt="">
       </div>
       """.replace("%%BG%%", _hero_bg_tp)
   st.markdown(_hero_html_tp, unsafe_allow_html=True)
