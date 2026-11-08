@@ -128,6 +128,58 @@ st.markdown(
 )
 
 
+# --- 見た目カスタム: 背景（可愛いキャラのハンドル投げ）＋タイトルバーを半透明で可愛く ---
+import base64 as _b64
+
+_bg_path = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "assets", "handle_throw_chara.jpg"
+)
+try:
+  with open(_bg_path, "rb") as _f:
+    _bg_b64 = _b64.b64encode(_f.read()).decode()
+  st.markdown(
+      f"""
+      <style>
+      .stApp {{
+          background-image:
+              linear-gradient(rgba(255,255,255,0.58), rgba(255,255,255,0.85)),
+              url("data:image/jpeg;base64,{_bg_b64}");
+          background-size: cover;
+          background-position: center top;
+          background-repeat: no-repeat;
+          background-attachment: fixed;
+      }}
+      /* ページのタイトルを、すりガラス風の半透明で可愛いバーに */
+      .main h1 {{
+          background: linear-gradient(135deg, rgba(255,255,255,.75), rgba(255,240,246,.65));
+          -webkit-backdrop-filter: blur(10px);
+          backdrop-filter: blur(10px);
+          border: 1px solid rgba(255,255,255,.85);
+          border-radius: 20px;
+          padding: .5em .8em;
+          box-shadow: 0 8px 24px rgba(244,114,182,.18);
+      }}
+      /* 左メニュー全体もほんのり半透明のパステルに */
+      [data-testid="stSidebar"] {{
+          background: rgba(255,248,251,.88);
+          -webkit-backdrop-filter: blur(10px);
+          backdrop-filter: blur(10px);
+      }}
+      [data-testid="stSidebar"] h1 {{
+          background: rgba(255,255,255,.7);
+          border: 1px solid rgba(255,255,255,.85);
+          border-radius: 16px;
+          padding: .35em .6em;
+          box-shadow: 0 6px 18px rgba(244,114,182,.15);
+      }}
+      </style>
+      """,
+      unsafe_allow_html=True,
+  )
+except Exception:
+  pass
+
+
 import html as _html_mod
 
 
@@ -532,6 +584,19 @@ for _cat_name, _cat_items in NAV_CATEGORIES:
       if st.button(_nav_label, key=f"nav_{_nav_label}", use_container_width=True):
         st.session_state["app_mode"] = _nav_label
         st.rerun()
+
+# まとめページ（外部リンク）も左のリストに入れておく
+st.sidebar.divider()
+try:
+  st.sidebar.link_button(
+      "📖 競輪の回収率を高める方法（まとめ）",
+      "https://muse.ai/s/jing-lun-nohui-shou-lu-wogao-merufang-qu6xjdguwa5xo/GLyKtXn_oEgKl7BkFdqRN26BpS97VslDH9vr8OEnq4g",
+      use_container_width=True,
+  )
+except Exception:
+  st.sidebar.markdown(
+      "[📖 競輪の回収率を高める方法（まとめ）](https://muse.ai/s/jing-lun-nohui-shou-lu-wogao-merufang-qu6xjdguwa5xo/GLyKtXn_oEgKl7BkFdqRN26BpS97VslDH9vr8OEnq4g)"
+  )
 
 app_mode = st.session_state["app_mode"]
 
