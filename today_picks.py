@@ -4,17 +4,17 @@ ev_v2 の候補（確率モデル＋PRO支持）に、Kドリームス記者の�
 一致情報を重ねて、その日の「おすすめ（本命）」を選ぶ。
 
 選別の考え方（過去データの検証に基づく）:
-- おすすめ: ふるだび支持 かつ 記者の◎と軸が一致 かつ 推定回収率100%以上。
+- おすすめ（本命）: ふるだび支持 かつ 記者の◎と軸が一致 かつ 推定回収率100%以上。
   ふるだびは◎と軸が完全一致したレースで回収率が大きく上がった実績がある
   （織り交ぜ分析ページ参照）。足りない場合は「◎一致＋推定回収率100%以上」
   の候補で補う。
-- 一撃（表示停止中）: 高配当狙いとして実装したが、選ばれる買い目が実際には
-  高配当にならなかったため、2026-11-08にページでの表示を止めた。
-  後日ロジックから組み立て直す。以下は当時の考え方の記録。
-  実オッズが無いこのアプリでは、PRO予想家てんぐりの
-  買い目を軸にする（的中率25%以下の「穴」の範囲に絞り、本命級は除く）。
-  Kドリームス記者の◎と軸が一致するものを優先し、残りは推定回収率の
-  高い順に補う。
+- おすすめ: 本命に入らなかった候補のうち、PRO予想家てんぐりの買い目を軸に、
+  推定回収率100%以上・推定的中率25%以下で見込みの高いもの。記者の◎と軸が
+  一致するものを優先し、残りは推定回収率の高い順に補う。
+  （この枠は当初「一撃（高配当狙い）」として作ったが、選ばれる買い目の実質が
+  おすすめ級だったため、2026-11-08に「おすすめ」として出すことにした。）
+- 一撃: 将来、本物の高配当だけを分かりやすく出す枠として、実オッズを使う
+  形で後日作り直す予定。現在は選別・表示とも無し。
 
 このモジュールは確率計算を持たない（ev_v2 の出力を入力にする）。
 """
@@ -95,10 +95,10 @@ def _to_list(d):
     return [{k: r[k] for k in _PICK_COLS if k in r} for _, r in d.iterrows()]
 
 
-def select_picks(ranked, kd_by_race, max_main=3, max_hit=2):
-    """おすすめ／一撃を選んで dict で返す。ranked は ev_v2 の候補 DataFrame。"""
+def select_picks(ranked, kd_by_race, max_main=3, max_sub=2):
+    """おすすめ（本命）とおすすめを選んで dict で返す。ranked は ev_v2 の候補 DataFrame。"""
     if ranked is None or ranked.empty:
-        return {"おすすめ": [], "一撃": []}
+        return {"本命": [], "おすすめ": []}
     df = enrich(ranked, kd_by_race)
 
     agree = df["記者◎との関係"] == "一致"
@@ -113,21 +113,21 @@ def select_picks(ranked, kd_by_race, max_main=3, max_hit=2):
         main = pd.concat([main, extra])
 
     used = set(main["レースID"]) if len(main) else set()
-    # 一撃は「高配当狙い」。軸はPRO予想家てんぐりの買い目。
-    # 的中率25%以下の穴の範囲に絞り（本命級はおすすめとの違いが出ないので除く）、
+    # おすすめ（第2枠）。軸はPRO予想家てんぐりの買い目で、推定回収率100%以上・
+    # 推定的中率25%以下の見込みの高いもの。本命で使ったレースは除く。
     # Kドリームス記者の◎と軸が一致するものを優先し、残りは推定回収率順に補う。
     tengu = df["予想家"].str.contains("てんぐり", na=False)
-    hit_base = df[tengu
+    sub_base = df[tengu
                   & (df["推定回収率%"] >= 100)
                   & (df["推定的中率%"] <= 25)
                   & (~df["レースID"].isin(used))]
-    hit = hit_base[hit_base["記者◎との関係"] == "一致"].sort_values(
-        "推定回収率%", ascending=False).head(max_hit)
-    if len(hit) < max_hit:
-        extra = hit_base[~hit_base.index.isin(hit.index)].sort_values(
-            "推定回収率%", ascending=False).head(max_hit - len(hit))
-        hit = pd.concat([hit, extra])
-    return {"おすすめ": _to_list(main), "一撃": _to_list(hit)}
+    sub = sub_base[sub_base["記者◎との関係"] == "一致"].sort_values(
+        "推定回収率%", ascending=False).head(max_sub)
+    if len(sub) < max_sub:
+        extra = sub_base[~sub_base.index.isin(sub.index)].sort_values(
+            "推定回収率%", ascending=False).head(max_sub - len(sub))
+        sub = pd.concat([sub, extra])
+    return {"本命": _to_list(main), "おすすめ": _to_list(sub)}
 
 
 def reason_text(pick, kind):
@@ -142,7 +142,7 @@ def reason_text(pick, kind):
     if rel == "一致":
         parts.append("Kドリームス記者の◎とも軸が一致")
     elif rel == "不一致":
-        parts.append("記者の◎とはズレた穴目")
+        parts.append("記者の◎とは軸がズレている")
     parts.append(f"モデル的中率 {pick.get('推定的中率%', '-')}％")
     parts.append(f"推定回収率 {pick.get('推定回収率%', '-')}％")
     return "／".join(parts)
@@ -170,7 +170,7 @@ if __name__ == "__main__":
     ])
     kd = {"20261106_松山_4R_d3": 1, "20261106_松山_5R_d3": 1, "20261106_松山_6R_d3": 1}
     picks = select_picks(ranked, kd)
-    assert len(picks["おすすめ"]) == 1 and picks["おすすめ"][0]["買い目"] == "1-2"  # ふるだび+◎一致+EV>=100
-    assert len(picks["一撃"]) == 1 and picks["一撃"][0]["買い目"] == "3-2"          # てんぐり+◎不一致+高EV
-    assert "ふるだびが支持" in reason_text(picks["おすすめ"][0], "おすすめ")
+    assert len(picks["本命"]) == 1 and picks["本命"][0]["買い目"] == "1-2"        # ふるだび+◎一致+EV>=100
+    assert len(picks["おすすめ"]) == 1 and picks["おすすめ"][0]["買い目"] == "3-2"  # てんぐり支持+◎不一致+高EV（旧一撃枠の中身）
+    assert "ふるだびが支持" in reason_text(picks["本命"][0], "本命")
     print("today_picks self-test OK")
