@@ -1,4 +1,4 @@
-"""「今日のおすすめ買い目と一撃」ページの選別ロジック。
+"""「今日のおすすめ買い目と一撃の買い目」ページの選別ロジック。
 
 ev_v2 の候補（確率モデル＋PRO支持）に、Kドリームス記者の◎との
 一致情報を重ねて、その日の「おすすめ（本命）」と「一撃（穴目）」を選ぶ。
@@ -8,9 +8,10 @@ ev_v2 の候補（確率モデル＋PRO支持）に、Kドリームス記者の�
   ふるだびは◎と軸が完全一致したレースで回収率が大きく上がった実績がある
   （織り交ぜ分析ページ参照）。足りない場合は「◎一致＋推定回収率100%以上」
   の候補で補う。
-- 一撃: 推定回収率150%以上 かつ 的中率3〜20% の穴目。
-  記者の◎とズレているもの、てんぐり支持のものを優先する
-  （てんぐりの旨みは世間とズレたレースにある、という検証結果から）。
+- 一撃: 高配当狙い。実オッズが無いこのアプリでは、PRO予想家てんぐりの
+  買い目を軸にする（的中率25%以下の「穴」の範囲に絞り、本命級は除く）。
+  Kドリームス記者の◎と軸が一致するものを優先し、残りは推定回収率の
+  高い順に補う。
 
 このモジュールは確率計算を持たない（ev_v2 の出力を入力にする）。
 """
@@ -109,17 +110,21 @@ def select_picks(ranked, kd_by_race, max_main=3, max_hit=2):
         main = pd.concat([main, extra])
 
     used = set(main["レースID"]) if len(main) else set()
-    hit_pool = df[(df["推定回収率%"] >= 150)
-                  & (df["推定的中率%"] >= 3)
-                  & (df["推定的中率%"] <= 20)
-                  & (~df["レースID"].isin(used))].copy()
-    if not hit_pool.empty:
-        hit_pool["_pri"] = hit_pool.apply(
-            lambda r: (0 if r["記者◎との関係"] == "不一致" else 1)
-            + (0 if "てんぐり" in str(r["予想家"]) else 1), axis=1)
-        hit_pool = hit_pool.sort_values(
-            ["_pri", "推定回収率%"], ascending=[True, False]).head(max_hit)
-    return {"おすすめ": _to_list(main), "一撃": _to_list(hit_pool)}
+    # 一撃は「高配当狙い」。軸はPRO予想家てんぐりの買い目。
+    # 的中率25%以下の穴の範囲に絞り（本命級はおすすめとの違いが出ないので除く）、
+    # Kドリームス記者の◎と軸が一致するものを優先し、残りは推定回収率順に補う。
+    tengu = df["予想家"].str.contains("てんぐり", na=False)
+    hit_base = df[tengu
+                  & (df["推定回収率%"] >= 100)
+                  & (df["推定的中率%"] <= 25)
+                  & (~df["レースID"].isin(used))]
+    hit = hit_base[hit_base["記者◎との関係"] == "一致"].sort_values(
+        "推定回収率%", ascending=False).head(max_hit)
+    if len(hit) < max_hit:
+        extra = hit_base[~hit_base.index.isin(hit.index)].sort_values(
+            "推定回収率%", ascending=False).head(max_hit - len(hit))
+        hit = pd.concat([hit, extra])
+    return {"おすすめ": _to_list(main), "一撃": _to_list(hit)}
 
 
 def reason_text(pick, kind):
