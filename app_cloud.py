@@ -2255,11 +2255,16 @@ elif app_mode == "🎯 今日のおすすめ買い目":
             )
             _conn_tp.commit()
         _cur_tp.execute(
-            "SELECT saved_at, picks_json FROM today_picks_history "
+            "SELECT saved_at, signature, picks_json FROM today_picks_history "
             "WHERE target_date = %s ORDER BY id DESC",
             (target_str_tp,),
         )
-        for _saved_at_tp, _pj_tp in _cur_tp.fetchall():
+        _kept_sig_tp = None
+        for _saved_at_tp, _sig_row_tp, _pj_tp in _cur_tp.fetchall():
+          # 同時刻に二重保存された同一内容は、表示では1件にまとめる
+          if _sig_row_tp is not None and _sig_row_tp == _kept_sig_tp:
+            continue
+          _kept_sig_tp = _sig_row_tp
           try:
             hist_tp.append((_saved_at_tp, json.loads(_pj_tp)))
           except Exception:
