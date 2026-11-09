@@ -56,7 +56,8 @@ try:
   import today_picks
 
   if not hasattr(today_picks, "select_picks") or not hasattr(
-      today_picks, "picks_signature"):
+      today_picks, "picks_signature") or not hasattr(
+      today_picks, "support_score"):
     import importlib
 
     today_picks = importlib.reload(today_picks)
@@ -2214,7 +2215,7 @@ elif app_mode == "🎯 今日のおすすめ買い目":
       <div class="tp-hero">
         <div class="tp-hero-inner">
           <div class="tp-hero-title">🎯 今日のおすすめ買い目</div>
-          <p class="tp-hero-text">その日のレースから、<b>根拠がそろったおすすめ</b>を並べるページです。おすすめ（本命）は「ふるだびの支持 ＋ Kドリームス記者の◎と軸が一致 ＋ モデルの推定回収率100%以上」、おすすめは「PRO予想家の支持があり、推定回収率100%以上で見込みの高い買い目」を条件に選んでいます。PRO予想や記者の印が新しく入るたびに内容は変わります。過去の日付を選ぶと、その日のおすすめと実際の結果がそのまま残っています。</p>
+          <p class="tp-hero-text">その日のレースから、<b>根拠がそろったおすすめ</b>を並べるページです。おすすめ（本命）は「モデルの推定回収率110%以上 ＋ 推定的中率10%以上 ＋ 根拠の重なり（PRO複数名の支持／ふるだびの支持／Kドリームス記者の◎と軸が一致のいずれか）」、おすすめは「推定回収率100%以上の中から期待値の高い順」で、予想家を問わず選んでいます（1レース1買い目）。PRO予想や記者の印が新しく入るたびに内容は変わります。過去の日付を選ぶと、その日のおすすめと実際の結果がそのまま残っています。</p>
         </div>
         <img class="tp-hero-img" src="data:image/jpeg;base64,%%BG%%" alt="">
       </div>

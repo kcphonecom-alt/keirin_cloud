@@ -3,18 +3,26 @@
 ev_v2 の候補（確率モデル＋PRO支持）に、Kドリームス記者の◎との
 一致情報を重ねて、その日の「おすすめ（本命）」を選ぶ。
 
-選別の考え方（過去データの検証に基づく）:
-- おすすめ（本命）: ふるだび支持 かつ 記者の◎と軸が一致 かつ 推定回収率100%以上。
-  ふるだびは◎と軸が完全一致したレースで回収率が大きく上がった実績がある
-  （織り交ぜ分析ページ参照）。足りない場合は「◎一致＋推定回収率100%以上」
-  の候補で補う。
-- おすすめ: 本命に入らなかった候補のうち、PRO予想家てんぐりの買い目を軸に、
-  推定回収率100%以上・推定的中率25%以下で見込みの高いもの。記者の◎と軸が
-  一致するものを優先し、残りは推定回収率の高い順に補う。
-  （この枠は当初「一撃（高配当狙い）」として作ったが、選ばれる買い目の実質が
-  おすすめ級だったため、2026-11-08に「おすすめ」として出すことにした。）
+選別の考え方（2026-11-10 改定）:
+旧ルールは本命に「ふるだび支持＋記者の◎と軸が一致＋推定回収率100%以上」の
+三重条件を課したため、本命がほとんど出なかった（◎との完全一致自体が
+全期間で95レースしかない）。おすすめ枠もてんぐり軸限定だったため、
+出てくる買い目がてんぐりの内容に偏っていた。
+そこで、予想家や軸で先に絞るのをやめ、候補全体から「本当に期待値の高い
+買い目」を出す形に改めた:
+- 候補全体から推定回収率100%以上のものを母集団にし、1レース1買い目
+  （そのレースで推定回収率が一番高いもの）に絞る。
+- おすすめ（本命）: 母集団のうち推定回収率110%以上・推定的中率10%以上で、
+  根拠の重なり（PRO複数名の支持／ふるだび支持／記者の◎一致 のいずれか）が
+  あるものから、推定回収率の高い順に最大2件。
+- おすすめ: 本命に入らなかった母集団から、推定回収率の高い順に最大3件。
+  予想家は問わない（てんぐりも含むが、てんぐり限定ではない）。
+- 根拠の重なりは「絞り込み」ではなく、本命の最低条件と同点時の優先、
+  そして根拠表示にだけ使う。
 - 一撃: 将来、本物の高配当だけを分かりやすく出す枠として、実オッズを使う
   形で後日作り直す予定。現在は選別・表示とも無し。
+推定回収率はモデルの目安であり、最終判定は実オッズで EV監視
+（ev_watch.py）が行う、という役割分担は変わらない。
 
 このモジュールは確率計算を持たない（ev_v2 の出力を入力にする）。
 """
@@ -88,45 +96,66 @@ def enrich(ranked, kd_by_race):
 
 
 _PICK_COLS = ["レースID", "会場", "発走時間", "券種", "買い目",
-              "予想家", "推定回収率%", "推定的中率%", "記者◎との関係"]
+              "予想家", "予想家人数", "推定回収率%", "推定的中率%", "記者◎との関係"]
 
 
 def _to_list(d):
     return [{k: r[k] for k in _PICK_COLS if k in r} for _, r in d.iterrows()]
 
 
-def select_picks(ranked, kd_by_race, max_main=3, max_sub=2):
-    """おすすめ（本命）とおすすめを選んで dict で返す。ranked は ev_v2 の候補 DataFrame。"""
+def supporter_count(row):
+    """その買い目を支持するPROの人数。列が無ければ予想家文字列から数える。"""
+    n = row.get("予想家人数")
+    if n is not None and not (isinstance(n, float) and pd.isna(n)):
+        try:
+            return int(n)
+        except (TypeError, ValueError):
+            pass
+    authors = str(row.get("予想家", "") or "")
+    if not authors:
+        return 0
+    return len([a for a in authors.split("、") if a.strip()])
+
+
+def support_score(row):
+    """根拠の重なり（複数PRO支持+2 / ふるだび支持+1 / 記者◎一致+1）。"""
+    score = 0
+    if supporter_count(row) >= 2:
+        score += 2
+    if "ふるだび" in str(row.get("予想家", "") or ""):
+        score += 1
+    if row.get("記者◎との関係") == "一致":
+        score += 1
+    return score
+
+
+def select_picks(ranked, kd_by_race, max_main=2, max_sub=3):
+    """おすすめ（本命）とおすすめを選んで dict で返す。ranked は ev_v2 の候補 DataFrame。
+
+    予想家や軸では絞らず、推定回収率100%以上の候補全体から
+    「期待値の高い買い目」を出す（2026-11-10 改定、モジュール冒頭参照）。
+    """
     if ranked is None or ranked.empty:
         return {"本命": [], "おすすめ": []}
     df = enrich(ranked, kd_by_race)
+    df = df[df["推定回収率%"] >= 100].copy()
+    if df.empty:
+        return {"本命": [], "おすすめ": []}
+    df["_根拠"] = df.apply(support_score, axis=1)
+    # 1レース1買い目（そのレースで推定回収率が一番高いもの）
+    df = df.sort_values(
+        ["推定回収率%", "_根拠", "推定的中率%"],
+        ascending=False).drop_duplicates("レースID", keep="first")
 
-    agree = df["記者◎との関係"] == "一致"
-    ev_ok = df["推定回収率%"] >= 100
-    furu = df["予想家"].str.contains("ふるだび", na=False)
-
-    main = df[agree & ev_ok & furu].sort_values(
-        ["推定的中率%", "推定回収率%"], ascending=False).head(max_main)
-    if len(main) < max_main:
-        extra = df[agree & ev_ok & ~df.index.isin(main.index)].sort_values(
-            ["推定的中率%", "推定回収率%"], ascending=False).head(max_main - len(main))
-        main = pd.concat([main, extra])
+    order = ["推定回収率%", "_根拠", "推定的中率%"]
+    main_base = df[(df["推定回収率%"] >= 110)
+                   & (df["推定的中率%"] >= 10)
+                   & (df["_根拠"] >= 1)]
+    main = main_base.sort_values(order, ascending=False).head(max_main)
 
     used = set(main["レースID"]) if len(main) else set()
-    # おすすめ（第2枠）。軸はPRO予想家てんぐりの買い目で、推定回収率100%以上・
-    # 推定的中率25%以下の見込みの高いもの。本命で使ったレースは除く。
-    # Kドリームス記者の◎と軸が一致するものを優先し、残りは推定回収率順に補う。
-    tengu = df["予想家"].str.contains("てんぐり", na=False)
-    sub_base = df[tengu
-                  & (df["推定回収率%"] >= 100)
-                  & (df["推定的中率%"] <= 25)
-                  & (~df["レースID"].isin(used))]
-    sub = sub_base[sub_base["記者◎との関係"] == "一致"].sort_values(
-        "推定回収率%", ascending=False).head(max_sub)
-    if len(sub) < max_sub:
-        extra = sub_base[~sub_base.index.isin(sub.index)].sort_values(
-            "推定回収率%", ascending=False).head(max_sub - len(sub))
-        sub = pd.concat([sub, extra])
+    sub = df[~df["レースID"].isin(used)].sort_values(
+        order, ascending=False).head(max_sub)
     return {"本命": _to_list(main), "おすすめ": _to_list(sub)}
 
 
@@ -175,6 +204,9 @@ def reason_text(pick, kind):
     """買い目の根拠を短い文で返す（ページ表示用）。"""
     parts = []
     authors = str(pick.get("予想家", "") or "")
+    n_authors = supporter_count(pick)
+    if n_authors >= 2:
+        parts.append(f"PRO{n_authors}名が支持")
     if "ふるだび" in authors:
         parts.append("ふるだびが支持")
     if "てんぐり" in authors:
@@ -211,9 +243,29 @@ if __name__ == "__main__":
     ])
     kd = {"20261106_松山_4R_d3": 1, "20261106_松山_5R_d3": 1, "20261106_松山_6R_d3": 1}
     picks = select_picks(ranked, kd)
-    assert len(picks["本命"]) == 1 and picks["本命"][0]["買い目"] == "1-2"        # ふるだび+◎一致+EV>=100
-    assert len(picks["おすすめ"]) == 1 and picks["おすすめ"][0]["買い目"] == "3-2"  # てんぐり支持+◎不一致+高EV（旧一撃枠の中身）
+    assert len(picks["本命"]) == 1 and picks["本命"][0]["買い目"] == "1-2"        # ふるだび+◎一致+EV130
+    assert len(picks["おすすめ"]) == 1 and picks["おすすめ"][0]["買い目"] == "3-2"  # てんぐり単独でも高EVならおすすめに出る
     assert "ふるだびが支持" in reason_text(picks["本命"][0], "本命")
+
+    # 新ルールの要: ふるだびでなくても、複数PRO支持＋高EVなら本命に出る
+    ranked2 = pd.DataFrame([
+        {"レースID": "20261106_松山_4R_d3", "会場": "松山", "発走時間": "21:40", "券種": "2車単",
+         "買い目": "2-3", "予想家": "Y、133さん", "予想家人数": 2, "推定回収率%": 150.0, "推定的中率%": 20.0},
+        {"レースID": "20261106_松山_4R_d3", "会場": "松山", "発走時間": "21:40", "券種": "ワイド",
+         "買い目": "2=3", "予想家": "ふるだび", "予想家人数": 1, "推定回収率%": 120.0, "推定的中率%": 40.0},
+        {"レースID": "20261106_松山_5R_d3", "会場": "松山", "発走時間": "22:00", "券種": "2車単",
+         "買い目": "4-1", "予想家": "カズヤ丸", "予想家人数": 1, "推定回収率%": 180.0, "推定的中率%": 18.0},
+        {"レースID": "20261106_松山_6R_d3", "会場": "松山", "発走時間": "22:20", "券種": "2車単",
+         "買い目": "5-1", "予想家": "てんぐり", "予想家人数": 1, "推定回収率%": 105.0, "推定的中率%": 30.0},
+    ])
+    kd2 = {"20261106_松山_4R_d3": 2, "20261106_松山_5R_d3": 1, "20261106_松山_6R_d3": 1}
+    picks2 = select_picks(ranked2, kd2)
+    # 4Rは1レース1買い目でEVが高い 2-3 が残り、複数支持+◎一致で本命になる
+    assert len(picks2["本命"]) == 1 and picks2["本命"][0]["買い目"] == "2-3"
+    assert "PRO2名が支持" in reason_text(picks2["本命"][0], "本命")
+    # 5RはEV180でも根拠の重なりが無いので本命ではなく、おすすめの先頭に出る
+    assert picks2["おすすめ"][0]["買い目"] == "4-1"
+    assert len(picks2["おすすめ"]) == 2  # 5R と 6R（EV105）
 
     sig = picks_signature(picks)
     assert picks_signature(picks) == sig
