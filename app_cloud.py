@@ -55,7 +55,8 @@ except Exception:
 try:
   import today_picks
 
-  if not hasattr(today_picks, "select_picks"):
+  if not hasattr(today_picks, "select_picks") or not hasattr(
+      today_picks, "picks_signature"):
     import importlib
 
     today_picks = importlib.reload(today_picks)
