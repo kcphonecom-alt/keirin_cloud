@@ -8,7 +8,7 @@
 #   2. ~/Library/LaunchAgents に launchd 設定（plist）を4つ作る
 #   3. launchctl で有効化する
 # スケジュール（日本時間）:
-#   pinpoint.py（PRO予想のみ）      : 07:30 / 09:00 / 12:00 / 15:00 / 18:00 / 21:00 / 23:00
+#   pinpoint.py（PRO予想のみ）      : 07:30 / 08:00 / 09:00 / 12:00 / 15:00 / 18:00 / 21:00 / 23:00
 #   daily_update.py（出走表・結果） : 23:50（当日分）
 #   daily_update.py（前日分の回収） : 04:30（DAYS_OFFSET=1）
 #   backfill_midnight.py（不足分）  : 03:30（対象が無くなれば自動で空振り終了）
@@ -133,6 +133,7 @@ time_one() { echo "  <dict><key>Hour</key><integer>$1</integer><key>Minute</key>
 
 PIN_TIMES="  <array>
 $(time_one 7 30)
+$(time_one 8 0)
 $(time_one 9 0)
 $(time_one 12 0)
 $(time_one 15 0)
@@ -169,7 +170,7 @@ cat <<'DONE'
 
 🎉 セットアップ完了。スケジュール起動で全自動になりました。
 
-  PRO予想 pinpoint : 07:30 / 09:00 / 12:00 / 15:00 / 18:00 / 21:00 / 23:00
+  PRO予想 pinpoint : 07:30 / 08:00 / 09:00 / 12:00 / 15:00 / 18:00 / 21:00 / 23:00
   全データ daily   : 23:50（当日分）＋ 04:30（前日分の取りこぼし回収）
   補完 backfill    : 03:30（backfill一式がある場合のみ。ミッドナイト不足分の消化用）
 
