@@ -130,6 +130,47 @@ def select_picks(ranked, kd_by_race, max_main=3, max_sub=2):
     return {"本命": _to_list(main), "おすすめ": _to_list(sub)}
 
 
+def picks_signature(picks):
+    """買い目の顔ぶれを表す署名（保存履歴の重複判定用）。
+
+    レース・券種・買い目・予想家が同じなら、推定値の細かい変動では
+    署名は変わらない。顔ぶれが変わった時だけ、新しい保存が要る。
+    """
+    items = []
+    for kind in ("本命", "おすすめ"):
+        for p in picks.get(kind, []) or []:
+            items.append([
+                kind,
+                str(p.get("レースID", "")),
+                str(p.get("券種", "")),
+                str(p.get("買い目", "")),
+                str(p.get("予想家", "")),
+            ])
+    return json.dumps(sorted(items), ensure_ascii=False)
+
+
+def _jsonable(v):
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def to_jsonable_picks(picks):
+    """保存用に、買い目dictの値を JSON 化できる型（str/float）にそろえる。"""
+    out = {}
+    for kind in ("本命", "おすすめ"):
+        out[kind] = [
+            {k: _jsonable(v) for k, v in p.items()}
+            for p in picks.get(kind, []) or []
+        ]
+    return out
+
+
 def reason_text(pick, kind):
     """買い目の根拠を短い文で返す（ページ表示用）。"""
     parts = []
@@ -173,4 +214,17 @@ if __name__ == "__main__":
     assert len(picks["本命"]) == 1 and picks["本命"][0]["買い目"] == "1-2"        # ふるだび+◎一致+EV>=100
     assert len(picks["おすすめ"]) == 1 and picks["おすすめ"][0]["買い目"] == "3-2"  # てんぐり支持+◎不一致+高EV（旧一撃枠の中身）
     assert "ふるだびが支持" in reason_text(picks["本命"][0], "本命")
+
+    sig = picks_signature(picks)
+    assert picks_signature(picks) == sig
+    changed = {"本命": [dict(picks["本命"][0], 買い目="1-3")], "おすすめ": []}
+    assert picks_signature(changed) != sig
+    # 推定値だけの変動では署名は変わらない
+    wiggle = {"本命": [dict(picks["本命"][0], **{"推定回収率%": 131.5})],
+              "おすすめ": list(picks["おすすめ"])}
+    assert picks_signature(wiggle) == sig
+    jp = to_jsonable_picks(picks)
+    json.dumps(jp, ensure_ascii=False)  # 例外なくJSON化できること
+    assert jp["本命"][0]["買い目"] == "1-2"
+    assert jp["おすすめ"][0]["買い目"] == "3-2"
     print("today_picks self-test OK")
