@@ -276,6 +276,19 @@ def init_db():
                 "発走時間" TEXT
             )
         """)
+    cursor.execute("""
+            CREATE TABLE IF NOT EXISTS today_picks_history (
+                id SERIAL PRIMARY KEY,
+                saved_at TEXT,
+                target_date TEXT,
+                signature TEXT,
+                picks_json TEXT
+            )
+        """)
+    cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_tph_target_date
+            ON today_picks_history (target_date)
+        """)
     conn.commit()
     conn.close()
   except Exception:
@@ -2211,12 +2224,61 @@ elif app_mode == "🎯 今日のおすすめ買い目":
         }
       picks_tp = today_picks.select_picks(ranked_tp, kd_map_tp)
 
+      # --- 買い目の保存履歴（タイムスタンプつき） ---
+      # 今日分は、買い目の顔ぶれが変わるたびにDBへ保存して残す（開くたびの
+      # 作り直しで、前に出ていた買い目が消えてしまわないように）。
+      # 保存・読込に失敗してもページ自体は止めない。
+      hist_tp = []  # [(saved_at, picks_dict), ...] 新しい順
+      try:
+        _conn_tp = get_db_connection()
+        _cur_tp = _conn_tp.cursor()
+        if not is_past_tp and (picks_tp.get("本命") or picks_tp.get("おすすめ")):
+          _sig_tp = today_picks.picks_signature(picks_tp)
+          _cur_tp.execute(
+              "SELECT signature FROM today_picks_history "
+              "WHERE target_date = %s ORDER BY id DESC LIMIT 1",
+              (target_str_tp,),
+          )
+          _latest_tp = _cur_tp.fetchone()
+          if not _latest_tp or _latest_tp[0] != _sig_tp:
+            _cur_tp.execute(
+                "INSERT INTO today_picks_history "
+                "(saved_at, target_date, signature, picks_json) "
+                "VALUES (%s, %s, %s, %s)",
+                (_now_tp.strftime("%Y-%m-%d %H:%M"),
+                 target_str_tp,
+                 _sig_tp,
+                 json.dumps(
+                     today_picks.to_jsonable_picks(picks_tp),
+                     ensure_ascii=False)),
+            )
+            _conn_tp.commit()
+        _cur_tp.execute(
+            "SELECT saved_at, picks_json FROM today_picks_history "
+            "WHERE target_date = %s ORDER BY id DESC",
+            (target_str_tp,),
+        )
+        for _saved_at_tp, _pj_tp in _cur_tp.fetchall():
+          try:
+            hist_tp.append((_saved_at_tp, json.loads(_pj_tp)))
+          except Exception:
+            pass
+        _conn_tp.close()
+      except Exception:
+        hist_tp = []
+
+      # 過去の日は、保存履歴があればその日の最終保存分を表示する
+      disp_tp = picks_tp
+      if is_past_tp and hist_tp:
+        disp_tp = hist_tp[0][1]
+
       pro_races_tp = 0
       if not ranked_tp.empty:
         pro_races_tp = ranked_tp["レースID"].nunique()
       st.caption(
           f"表示時刻: {_now_tp.strftime('%Y-%m-%d %H:%M')}（日本時間）。"
           "このページは開くたびに、DBに入っている最新のPRO予想・選手データ・記者の印から作り直しています。"
+          "買い目の顔ぶれが変わると、下の「保存履歴」にタイムスタンプつきで残ります。"
           f"（この日のPRO予想つき候補レース: {pro_races_tp} 件）"
       )
 
@@ -2268,22 +2330,42 @@ elif app_mode == "🎯 今日のおすすめ買い目":
           )
 
       st.subheader("📌 おすすめ（本命）")
-      if picks_tp["本命"]:
-        _bet_cards_tp(picks_tp["本命"], "#0f766e")
-        show_df_responsive(_pick_rows_tp(picks_tp["本命"], "本命", 500), "tp_main")
+      if disp_tp["本命"]:
+        _bet_cards_tp(disp_tp["本命"], "#0f766e")
+        show_df_responsive(_pick_rows_tp(disp_tp["本命"], "本命", 500), "tp_main")
       else:
         st.info("この日は、根拠のそろった本命がありませんでした（条件に合わない日は無理に出しません）。")
 
       st.subheader("📌 おすすめ")
-      if picks_tp["おすすめ"]:
-        _bet_cards_tp(picks_tp["おすすめ"], "#2563eb")
-        show_df_responsive(_pick_rows_tp(picks_tp["おすすめ"], "おすすめ", 200), "tp_sub")
+      if disp_tp["おすすめ"]:
+        _bet_cards_tp(disp_tp["おすすめ"], "#2563eb")
+        show_df_responsive(_pick_rows_tp(disp_tp["おすすめ"], "おすすめ", 200), "tp_sub")
       else:
         st.info("この日は、おすすめの条件に合う買い目がありませんでした。")
 
+      if hist_tp:
+        st.subheader("🕘 保存履歴（タイムスタンプつき）")
+        st.caption("買い目の顔ぶれが変わるたびに自動で保存しています。新しい順に並んでいます。")
+        for _hi_tp, (_saved_at_tp, _hp_tp) in enumerate(hist_tp):
+          st.markdown(f"**{_saved_at_tp} 時点の買い目**")
+          if _hp_tp.get("本命"):
+            st.markdown("おすすめ（本命）")
+            _bet_cards_tp(_hp_tp["本命"], "#0f766e")
+            show_df_responsive(
+                _pick_rows_tp(_hp_tp["本命"], "本命", 500),
+                f"tp_hist_{_hi_tp}_main")
+          if _hp_tp.get("おすすめ"):
+            st.markdown("おすすめ")
+            _bet_cards_tp(_hp_tp["おすすめ"], "#2563eb")
+            show_df_responsive(
+                _pick_rows_tp(_hp_tp["おすすめ"], "おすすめ", 200),
+                f"tp_hist_{_hi_tp}_sub")
+          if not _hp_tp.get("本命") and not _hp_tp.get("おすすめ"):
+            st.caption("この時点では買い目なし")
+
       st.caption(
           "注: 推定回収率は確率モデルによる目安で、実際のオッズとは別物です。買う前に必ず実際のオッズを確認してください。"
-          "過去の日の表示は、残っているデータから当時の条件で再計算したもので、履歴として残り続けます。"
+          "過去の日は、保存履歴がある日はその日の最終保存分を表示します（保存履歴が無い古い日は、残っているデータから当時の条件で再計算した表示です）。"
       )
 
 
