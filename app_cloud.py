@@ -63,6 +63,17 @@ try:
 except Exception:
   today_picks = None
 
+try:
+  import ev_watch
+
+  if not hasattr(ev_watch, "sync_watch_tasks") or not hasattr(
+      ev_watch, "latest_snapshots"):
+    import importlib
+
+    ev_watch = importlib.reload(ev_watch)
+except Exception:
+  ev_watch = None
+
 # psycopg2 の安全なインポート
 try:
   import psycopg2
@@ -289,6 +300,40 @@ def init_db():
     cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_tph_target_date
             ON today_picks_history (target_date)
+        """)
+    cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ev_watch_tasks (
+                id SERIAL PRIMARY KEY,
+                target_date TEXT,
+                race_id TEXT,
+                venue TEXT,
+                start_time TEXT,
+                kind TEXT,
+                bet_type TEXT,
+                combo TEXT,
+                hit_prob_pct REAL,
+                breakeven_odds REAL,
+                created_at TEXT,
+                UNIQUE (target_date, race_id, bet_type, combo)
+            )
+        """)
+    cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ev_odds_snapshots (
+                id SERIAL PRIMARY KEY,
+                target_date TEXT,
+                race_id TEXT,
+                bet_type TEXT,
+                combo TEXT,
+                checked_at TEXT,
+                live_odds REAL,
+                ev REAL,
+                verdict TEXT,
+                source TEXT
+            )
+        """)
+    cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_ev_snap_lookup
+            ON ev_odds_snapshots (target_date, race_id, bet_type, combo, id)
         """)
     conn.commit()
     conn.close()
@@ -2273,6 +2318,26 @@ elif app_mode == "🎯 今日のおすすめ買い目":
       except Exception:
         hist_tp = []
 
+      # --- EV監視（実オッズ判定）のタスク同期と最新判定の読み込み ---
+      # 今日分は、おすすめ買い目が決まった時点で監視タスクを自動作成する。
+      # 実オッズの取得は Mac 側の odds_watch.py が定期的に行い、結果を
+      # ev_odds_snapshots に残す。このページは最新の判定を表示するだけ。
+      watch_tasks_tp = []
+      watch_latest_tp = {}
+      if ev_watch is not None:
+        try:
+          _conn_ev = get_db_connection()
+          if not is_past_tp and (picks_tp.get("本命") or picks_tp.get("おすすめ")):
+            ev_watch.sync_watch_tasks(
+                _conn_ev, target_str_tp, picks_tp,
+                _now_tp.strftime("%Y-%m-%d %H:%M"))
+          watch_tasks_tp = ev_watch.load_watch_tasks(_conn_ev, target_str_tp)
+          watch_latest_tp = ev_watch.latest_snapshots(_conn_ev, target_str_tp)
+          _conn_ev.close()
+        except Exception:
+          watch_tasks_tp = []
+          watch_latest_tp = {}
+
       # 過去の日は、保存履歴があればその日の最終保存分を表示する
       disp_tp = picks_tp
       if is_past_tp and hist_tp:
@@ -2348,6 +2413,59 @@ elif app_mode == "🎯 今日のおすすめ買い目":
         show_df_responsive(_pick_rows_tp(disp_tp["おすすめ"], "おすすめ", 200), "tp_sub")
       else:
         st.info("この日は、おすすめの条件に合う買い目がありませんでした。")
+
+      # --- EV監視の表示（実オッズで「まだ買えるか」を見る） ---
+      st.subheader("📡 EV監視（実オッズ判定）")
+      if watch_tasks_tp:
+        _ev_rows_tp = []
+        _cnt_tp = {"買い圏内": 0, "見送り": 0, "未確認": 0}
+        for _t_tp in watch_tasks_tp:
+          _snap_tp = watch_latest_tp.get(
+              (_t_tp["レースID"], _t_tp["券種"], _t_tp["買い目"]))
+          if _snap_tp:
+            _verdict_tp = _snap_tp["判定"]
+            if _verdict_tp in ("買い圏内", "見送り"):
+              _cnt_tp[_verdict_tp] += 1
+            else:
+              _cnt_tp["未確認"] += 1
+            _judge_tp = {"買い圏内": "🟢 買い圏内", "見送り": "🔴 見送り"}.get(
+                _verdict_tp, "⚪ 判定不能")
+            _odds_tp = f"{_snap_tp['実オッズ']:.1f}倍"
+            _ev_tp = (f"{_snap_tp['EV'] * 100:+.0f}%" if _snap_tp["EV"] is not None else "-")
+            _at_tp = _snap_tp["確認時刻"]
+          else:
+            _cnt_tp["未確認"] += 1
+            _judge_tp = "⚪ 未確認"
+            _odds_tp = "-"
+            _ev_tp = "-"
+            _at_tp = "-"
+          _ev_rows_tp.append({
+              "会場": _t_tp["会場"],
+              "レース": _t_tp["レースID"].split("_")[2],
+              "発走": _t_tp["発走時間"],
+              "区分": _t_tp["区分"],
+              "券種": _t_tp["券種"],
+              "買い目": _t_tp["買い目"],
+              "推定的中率": f"{_t_tp['推定的中率%']:.1f}%",
+              "損益分岐": f"{_t_tp['損益分岐オッズ']:.2f}倍",
+              "最新実オッズ": _odds_tp,
+              "実オッズEV": _ev_tp,
+              "判定": _judge_tp,
+              "確認時刻": _at_tp,
+          })
+        st.caption(
+            f"買い圏内 {_cnt_tp['買い圏内']}件 / 見送り {_cnt_tp['見送り']}件 / "
+            f"未確認 {_cnt_tp['未確認']}件。"
+            "判定は推定回収率ではなく、実際に確認したオッズで計算しています"
+            "（EV = 推定的中率 × 実オッズ − 1。ワイドはオッズ範囲の下限で判定し、1.5倍未満も見送り）。"
+            "実オッズは Mac 側の監視スクリプトが定期的に取りに行きます。"
+        )
+        show_df_responsive(pd.DataFrame(_ev_rows_tp), "tp_evwatch")
+      else:
+        st.caption(
+            "監視タスクは、おすすめ買い目が出た時点で自動で作られます。"
+            "実オッズが入ると、ここに「買い圏内／見送り」の判定が出ます。"
+        )
 
       if hist_tp:
         st.subheader("🕘 保存履歴（タイムスタンプつき）")
