@@ -1029,6 +1029,25 @@ elif app_mode == "🌙 ミッドナイト高回収率 ＆ PRO予想融合シミ�
         step=100,
     )
 
+    period_mode = st.radio(
+        "📅 対象期間",
+        ["全期間", "開催日を指定（開始日〜終了日）"],
+        horizontal=True,
+    )
+    period_start = None
+    period_end = None
+    if period_mode.startswith("開催日"):
+      import datetime as _pdt
+
+      _today = _pdt.datetime.now(
+          _pdt.timezone(_pdt.timedelta(hours=9))
+      ).date()
+      p_col1, p_col2 = st.columns(2)
+      period_start = p_col1.date_input("開始日", value=_today)
+      period_end = p_col2.date_input("終了日", value=_today)
+      if period_start and period_end and period_start > period_end:
+        period_start, period_end = period_end, period_start
+
     target_bets_3t = set()
     target_boxes_3f = set()
     target_bets_2t = set()
@@ -1155,6 +1174,22 @@ elif app_mode == "🌙 ミッドナイト高回収率 ＆ PRO予想融合シミ�
 
         if not is_midnight:
           continue
+
+        if period_start is not None and period_end is not None:
+          race_date = None
+          try:
+            import datetime as _pdt2
+
+            _m = re.match(r"(\d{8})_.+_(\d+)R_d(\d+)", str(race_id))
+            if _m:
+              _s = _m.group(1)
+              race_date = _pdt2.date(
+                  int(_s[:4]), int(_s[4:6]), int(_s[6:8])
+              ) + _pdt2.timedelta(days=int(_m.group(3)) - 1)
+          except Exception:
+            race_date = None
+          if race_date is None or not (period_start <= race_date <= period_end):
+            continue
 
         midnight_races += 1
         r1 = row.get("1着車番") or row.get("1st_car")
