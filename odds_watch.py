@@ -97,21 +97,33 @@ async def fetch_odds_text(page, url, bet_type):
 
     券種はURLでは切り替わらず、ページ内のタブで切り替わる
     （2026-11-10 実物確認）。開いた後に券種タブを押してから本文を取る。
+
+    失敗は黙って空文字を返さない：goto／タブ切替／本文取得のどこで
+    止まったかをログに残す（2026-11-10 は判定が終日ゼロ件で、原因の
+    切り分けがログだけではできなかったため）。
+    networkidle は WINTICKET の常駐通信でタイムアウトしやすいので
+    domcontentloaded で開き、タブ描画を少し待ってから押す。
     """
     try:
         if page.url != url:
-            await page.goto(url, wait_until="networkidle", timeout=20000)
-    except Exception:
-        pass
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    except Exception as e:
+        print(f"   [ページ取得失敗] {url}: {e}")
+        return ""
     try:
+        await page.wait_for_timeout(1500)
         await page.get_by_text(bet_type, exact=True).first.click(timeout=4000)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"   [タブ切替失敗] {bet_type}: {e}")
     try:
         await page.wait_for_timeout(1200)
-        return await page.evaluate("() => document.body.innerText")
-    except Exception:
+        text = await page.evaluate("() => document.body.innerText")
+    except Exception as e:
+        print(f"   [本文取得失敗] {bet_type}: {e}")
         return ""
+    if not text or len(text) < 50:
+        print(f"   [本文が短い] {bet_type}: {len(text) if text else 0}文字")
+    return text
 
 
 def notify_ntfy(message):
@@ -190,6 +202,7 @@ async def main():
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
+        print("ブラウザ起動 OK")
         context = await browser.new_context(
             locale="ja-JP", timezone_id="Asia/Tokyo")
         page = await context.new_page()
