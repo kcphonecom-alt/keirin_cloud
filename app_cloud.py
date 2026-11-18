@@ -267,6 +267,17 @@ def load_replica_data():
 
 
 @st.cache_data(ttl=60, show_spinner=False)
+def load_external_predictions():
+  try:
+    conn = get_db_connection()
+    df_ext = pd.read_sql("SELECT * FROM external_predictions", conn)
+    conn.close()
+    return df_ext
+  except Exception:
+    return pd.DataFrame()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
 def load_kd_marks():
   try:
     conn = get_db_connection()
@@ -615,6 +626,7 @@ NAV_CATEGORIES = [
         "🎯 確率で見つける お得な買い目",
         "🧪 過去のレースで実力テスト",
         "🗣 選手コメント傾向分析",
+        "🧰 買い目ジェネレーター",
     ]),
     ("【工事中】", [
         "工事中｜🎯 買い目別 EVランキング",
@@ -2706,3 +2718,142 @@ elif app_mode == "🎁 ミッドナイト特選 123BOX決着リスト":
       )
     else:
       st.info(f"該当レースはありませんでした（対象 {_n_target} レース）。")
+elif app_mode == "🧰 買い目ジェネレーター":
+  import importlib.util as _ilu_gen
+
+  st.title("🧰 買い目ジェネレーター")
+  st.markdown(
+      "複数の予想ソース（PRO予想・KEIRINCRAFT・記者の印・競走得点）を入力にして、"
+      "「印の組み合わせ → 買い目」の固定ルールを全レースに自動適用する仕組みです。"
+      "ルールは `keirin_generator/rules_sample.json` で差し替えできます。"
+  )
+  st.info(
+      "⚠️ ここに出る回収率はすべて **検証記録（100円/点の仮想集計）** で、実際の購入とは別です。"
+      "数字には必ず対象レース数（n）を併記しています。サンプルが小さいルールの回収率は大きくブレるため、"
+      "前半/後半で再現するかとあわせて見てください。"
+  )
+  st.caption(
+      "記者印はDBに無いため、記者系ルール（真島◎→○ など）は印データがあるレースでのみ生成されます。"
+      "下の「DBから生成」経路では記者系ルールは生成されません"
+      "（生成済みファイルがある日は、ウォッチ記録分を含むファイルの内容を優先表示します）。"
+  )
+
+  _kg_dir = os.path.join(
+      os.path.dirname(os.path.abspath(__file__)), "keirin_generator")
+  _kg = None
+  _rule_list_g = []
+  try:
+    _spec_gen = _ilu_gen.spec_from_file_location(
+        "kg_app_adapter", os.path.join(_kg_dir, "app_adapter.py"))
+    _kg = _ilu_gen.module_from_spec(_spec_gen)
+    _spec_gen.loader.exec_module(_kg)
+    _inputs_g, _rules_g, _engine_g = _kg.load_modules()
+    _rule_list_g = _kg.load_rules(_rules_g)
+  except Exception as _e_gen:
+    st.error(f"ジェネレーターを読み込めませんでした: {_e_gen}")
+
+  if _kg is not None and _rule_list_g:
+    st.subheader("📋 ルール一覧と実演成績（過去データでの一括検証）")
+    _report_g = _kg.load_demo_report()
+    _agg_g = (_report_g or {}).get("aggregate", {})
+    _rows_g = []
+    for _r in _rule_list_g:
+      _a = _agg_g.get(_r["id"])
+      if _a:
+        _t, _f, _s = _a["total"], _a["first"], _a["second"]
+        _rows_g.append({
+            "ルール": _r.get("name", _r["id"]),
+            "説明": _r.get("description", ""),
+            "対象R": _a["races"],
+            "点数": _t["points"],
+            "的中": _t["hits"],
+            "回収率": f"{_t['roi_pct']}%" if _t["roi_pct"] is not None else "-",
+            "前半 回収率(n)":
+                f"{_f['roi_pct']}% ({_f['points']})" if _f["roi_pct"] is not None else "-",
+            "後半 回収率(n)":
+                f"{_s['roi_pct']}% ({_s['points']})" if _s["roi_pct"] is not None else "-",
+        })
+      else:
+        _rows_g.append({
+            "ルール": _r.get("name", _r["id"]),
+            "説明": _r.get("description", ""),
+            "対象R": 0, "点数": 0, "的中": 0, "回収率": "-",
+            "前半 回収率(n)": "-", "後半 回収率(n)": "-",
+        })
+    show_df_responsive(pd.DataFrame(_rows_g), "kg_demo", head_cols=1)
+    if _report_g:
+      st.caption(
+          f"実演の計算時点: {_report_g.get('generated_at', '')}"
+          "（CLI版ジェネレーターで蓄積データに適用した結果）")
+
+    st.subheader("🗓 日付を選んで買い目を見る")
+    _fwd_dates_g = _kg.list_forward_dates()
+    if _fwd_dates_g:
+      st.caption(
+          "生成済みファイルがある日付: " + "、".join(_fwd_dates_g)
+          + "（その日はファイルの内容を優先表示）")
+    _sel_g = st.date_input("日付", value=datetime.now().date(), key="kg_date")
+    _date_g = _sel_g.isoformat()
+    _doc_g = _kg.load_forward(_date_g)
+    if _doc_g is not None:
+      st.caption(
+          f"📄 生成済みファイルを表示しています（生成: {_doc_g.get('generated_at', '')}）")
+      _bets_g = _doc_g.get("bets", [])
+    else:
+      _df_p_g, _df_m_g, _df_r_g = load_replica_data()
+      _df_x_g = load_external_predictions()
+      if _df_r_g.empty and _df_m_g.empty and _df_x_g.empty:
+        st.warning("DBからデータを読み込めませんでした。")
+        _bets_g = []
+      else:
+        with st.spinner("DBのデータから買い目を生成しています..."):
+          _races_g = _kg.build_race_inputs_from_frames(
+              _df_r_g, _df_m_g, _df_x_g, _df_p_g, only_date=_date_g)
+          _bets_g = _kg.generate_for_date(_races_g, _rule_list_g, _date_g)
+        st.caption(
+            "DBのデータからその場で生成しました（記者印が無いため記者系ルールは生成されません）。"
+            "結果がDBに入っているレースは精算結果も表示します。")
+
+    if not _bets_g:
+      st.info(
+          "この日付で生成された買い目はまだありません"
+          "（その日の予想データがDBに揃っていない可能性があります）。")
+    else:
+      _sum_g = _kg.summarize_bets(_bets_g)
+      _srows_g = []
+      for _r in _rule_list_g:
+        _s = _sum_g.get(_r["id"])
+        if not _s:
+          continue
+        _srows_g.append({
+            "ルール": _r.get("name", _r["id"]),
+            "対象R": _s["races"],
+            "点数": _s["points"],
+            "精算済": _s["settled"],
+            "的中": _s["hits"],
+            "払戻": f"{_s['returned']:,}円",
+            "回収率": f"{_s['roi_pct']}%" if _s["roi_pct"] is not None else "結果待ち",
+        })
+      st.markdown(f"**{_date_g} の生成結果（全 {len(_bets_g)} 点）**")
+      show_df_responsive(pd.DataFrame(_srows_g), "kg_day_summary", head_cols=1)
+      for _r in _rule_list_g:
+        _rb_g = [b for b in _bets_g if b["rule_id"] == _r["id"]]
+        if not _rb_g:
+          continue
+        with st.expander(f"{_r.get('name', _r['id'])}（{len(_rb_g)}点）"):
+          _drows_g = []
+          for _b in sorted(
+              _rb_g, key=lambda x: (x["venue"], x["race_no"], x["combo"])):
+            if _b.get("settled"):
+              _judge = "🎯 的中" if _b.get("hit") else "ハズレ"
+              _pay = f"{int(_b.get('payout', 0)):,}円" if _b.get("hit") else "-"
+            else:
+              _judge = "結果待ち"
+              _pay = "-"
+            _drows_g.append({
+                "会場": _b["venue"], "R": _b["race_no"],
+                "券種": _b["bet_type"], "組番": _b["combo"],
+                "判定": _judge, "払戻": _pay,
+            })
+          st.dataframe(
+              pd.DataFrame(_drows_g), use_container_width=True, hide_index=True)
